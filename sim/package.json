@@ -1,0 +1,7 @@
+{
+  "name": "electricos-sim",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": { "start": "node charger.js" },
+  "dependencies": { "ocpp-rpc": "^2.2.1" }
+}

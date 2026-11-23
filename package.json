@@ -1,0 +1,16 @@
+{
+  "name": "electricos",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Plataforma de carga de vehículos eléctricos con tarjeta RFID sobre OCPP 1.6J",
+  "workspaces": ["server", "web", "sim"],
+  "scripts": {
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w web",
+    "start": "npm start -w server",
+    "migrate": "npm run migrate -w server",
+    "sim": "npm start -w sim --",
+    "test": "npm test -w server"
+  }
+}

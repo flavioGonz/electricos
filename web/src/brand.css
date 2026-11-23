@@ -1,0 +1,21 @@
+/* Marca Infratec sobre el kit gui-infratec: carmesí en lugar del azul */
+:root {
+  --brand-50:#fff1f3; --brand-100:#ffe4e8; --brand-200:#fecdd6;
+  --brand-500:#e11d48; --brand-600:#be123c; --brand-700:#9f1239; --brand-900:#4c0519;
+  --brand: #e11d48; --brand-soft: #fff1f3;
+}
+:root[data-theme="dark"] {
+  --brand-50:#2a0f17; --brand-100:#3a1420; --brand-200:#5b1d30;
+  --brand-500:#f43f5e; --brand-600:#fb7185; --brand-700:#fda4af; --brand-900:#ffe4e8;
+  --brand:#e11d48; --brand-soft:#2a0f17;
+}
+.logo-d { display:none !important; }
+:root[data-theme="dark"] .logo-l { display:none !important; }
+:root[data-theme="dark"] .logo-d { display:inline-block !important; }
+.login-wrap { min-height:100vh; display:grid; place-items:center; padding:16px; background:var(--bg); }
+.login-card { width:100%; max-width:380px; }
+.conn { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; }
+.grid-chargers { display:grid; gap:14px; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); }
+.kwh { font-variant-numeric: tabular-nums; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.err-box { color: var(--falla); background: var(--falla-bg); border: 1px solid var(--falla-bd); padding: 10px 12px; border-radius: var(--r-sm); font-size: 13px; margin-bottom: 12px; }
