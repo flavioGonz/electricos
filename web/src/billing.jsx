@@ -1,6 +1,7 @@
 // Facturación electrónica: comprobantes mensuales por cuenta (e-Ticket / e-Factura) y configuración del emisor.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Field, PageHeader, Loading, Empty, Stat } from './components/ui.jsx';
+import { Select } from './components/select.jsx';
 import { Icon } from './components/icons.jsx';
 import { api, money, dt } from './api.js';
 import { useApi, act } from './hooks.js';
@@ -43,7 +44,7 @@ export function Invoices({ me }) {
       )}
       <div className="row wrap" style={{ gap: 12, marginBottom: 14, alignItems: 'end' }}>
         <Field label="Mes"><input type="month" value={month} max={thisMonth()} onChange={(e) => setMonth(e.target.value)} /></Field>
-        <Field label="Sitio"><select value={siteId} onChange={(e) => setSiteId(e.target.value)}><option value="">Todos</option>{sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
+        <Field label="Sitio"><Select icon="pin" value={siteId} onChange={setSiteId} options={[['', 'Todos los sitios'], ...sites.map((s) => [s.id, s.name])]} /></Field>
       </div>
       {data && live.length > 0 && (
         <div className="stats" style={{ marginBottom: 16 }}>
@@ -170,7 +171,7 @@ function BillingSettings({ cfg, onClose, onSaved }) {
         <div className="field"><label className="switch-row"><span>Las tarifas ya incluyen IVA</span><input type="checkbox" checked={v.prices_include_iva !== false} onChange={set('prices_include_iva')} /></label></div>
         <div className="form-sec">Proveedor de CFE</div>
         <Field className="full" label="Proveedor" hint="El proveedor habilitado por DGI firma y envía el comprobante.">
-          <select value={v.provider || 'ninguno'} onChange={set('provider')}><option value="ninguno">Ninguno: registro el número a mano</option><option value="api">Conectado por API</option></select>
+          <Select value={v.provider || 'ninguno'} onChange={(x) => setV({ ...v, provider: x })} options={[['ninguno', 'Ninguno', 'Registro el número del comprobante a mano'], ['api', 'Conectado por API', 'Se firma y envía solo']]} />
         </Field>
         {v.provider === 'api' && <>
           <Field className="full" label="Dirección de la API" hint="Recibe el comprobante en JSON con un POST y devuelve serie, número y PDF."><input value={v.provider_url || ''} onChange={set('provider_url')} placeholder="https://…/api/cfe" /></Field>

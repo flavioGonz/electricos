@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import { Modal, Field, PageHeader, Stat, Loading, Empty, Switch, Segmented } from './components/ui.jsx';
 import { Icon } from './components/icons.jsx';
+import { Select } from './components/select.jsx';
 import CrudPage from './Crud.jsx';
 import { api, money, kwh, dt, ago } from './api.js';
 import { useApi, act } from './hooks.js';
@@ -187,11 +188,11 @@ export function Chargers() {
           footer={<><button className="btn sec" data-close onClick={() => setEdit(null)}>Cancelar</button><button className="btn" onClick={save}>Guardar</button></>}>
           <div className="form-grid">
             <Field className="full" label="Nombre"><input value={edit.name || ''} placeholder="Cochera 12" onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
-            <Field label="Sitio"><select value={edit.site_id || ''} onChange={(e) => setEdit({ ...edit, site_id: e.target.value })}><option value="">—</option>{sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
+            <Field label="Sitio"><Select value={edit.site_id || ''} onChange={(x) => setEdit({ ...edit, site_id: x })} options={[['', 'Sin sitio'], ...sites.map((s) => [s.id, s.name])]} /></Field>
             <Field label="Corriente máxima (A)"><input type="number" value={edit.max_amps} onChange={(e) => setEdit({ ...edit, max_amps: e.target.value })} /></Field>
-            <Field className="full" label="Uso" hint="Exclusivo: solo las tarjetas de esa cuenta pueden cargar."><select value={edit.owner_account_id || ''} onChange={(e) => setEdit({ ...edit, owner_account_id: e.target.value })}><option value="">Compartido entre las cuentas del sitio</option>{accounts.map((a) => <option key={a.id} value={a.id}>Exclusivo de {who(a.unit, a.name)}</option>)}</select></Field>
+            <Field className="full" label="Uso" hint="Exclusivo: solo las tarjetas de esa cuenta pueden cargar."><Select value={edit.owner_account_id || ''} onChange={(x) => setEdit({ ...edit, owner_account_id: x })} options={[['', 'Compartido', 'Cualquier cuenta del sitio puede cargar'], ...accounts.map((a) => [a.id, `Exclusivo de ${who(a.unit, a.name)}`])]} /></Field>
             <Field className="full" label="Driver" hint={edit.vendor ? `El equipo informa ${edit.vendor} ${edit.model || ''}.` : 'Se detecta solo cuando el equipo se conecta.'}>
-              <select value={edit.model_id || ''} onChange={(e) => setEdit({ ...edit, model_id: e.target.value })}><option value="">Sin driver</option>{models.map((m) => <option key={m.id} value={m.id}>{m.name}{m.vendor !== '*' ? ` · ${m.vendor}` : ''}</option>)}</select>
+              <Select value={edit.model_id || ''} onChange={(x) => setEdit({ ...edit, model_id: x })} options={[['', 'Sin driver'], ...models.map((m) => [m.id, m.name, m.vendor !== '*' ? m.vendor : undefined])]} />
             </Field>
             <div className="field full"><Switch label="Aprobado para autorizar cargas" checked={edit.approved} onChange={(v) => setEdit({ ...edit, approved: v })} /></div>
             {edit.connected && edit.model_id && (
@@ -364,7 +365,7 @@ function AccountSheet({ account, onClose, ro }) {
       {tab === 'mov' ? (
         <>
           {!ro && <div className="form-grid" style={{ gridTemplateColumns: '130px 130px 1fr auto', alignItems: 'end' }}>
-            <Field label="Tipo"><select value={pay.kind} onChange={(e) => setPay({ ...pay, kind: e.target.value })}><option value="payment">Pago</option><option value="adjustment">Ajuste</option></select></Field>
+            <Field label="Tipo"><Select value={pay.kind} onChange={(x) => setPay({ ...pay, kind: x })} options={[['payment', 'Pago'], ['adjustment', 'Ajuste']]} /></Field>
             <Field label="Monto"><input type="number" value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} placeholder="500" /></Field>
             <Field label="Detalle"><input value={pay.description} onChange={(e) => setPay({ ...pay, description: e.target.value })} placeholder="Expensas de noviembre" /></Field>
             <div className="field"><button className="btn" disabled={!pay.amount} onClick={add}>Registrar</button></div>
@@ -466,7 +467,7 @@ export function Report() {
         actions={<button className="btn sec" onClick={() => downloadCsv(`/reports/monthly?${qs}&format=csv`, `liquidacion-${month}.csv`).catch(() => {})}><Icon name="download" size={15} />CSV</button>} />
       <div className="row wrap" style={{ gap: 12, marginBottom: 14 }}>
         <Field label="Mes"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} /></Field>
-        <Field label="Sitio"><select value={siteId} onChange={(e) => setSiteId(e.target.value)}><option value="">Todos</option>{sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
+        <Field label="Sitio"><Select icon="pin" value={siteId} onChange={setSiteId} options={[['', 'Todos los sitios'], ...sites.map((s) => [s.id, s.name])]} /></Field>
       </div>
       {!data ? <Loading rows={5} /> : (
         <div className="card flush"><div className="tablewrap"><table className="table">
