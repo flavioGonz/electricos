@@ -1,9 +1,12 @@
 // API REST para el panel de administración.
 import bcrypt from 'bcryptjs';
 import { one, many, q } from './db.js';
-import { clients, events, normTag, sendLocalList, accountBalance, closeSession, applyDriver, matchModel } from './ocpp.js';
+import { clients, events, normTag, sendLocalList, accountBalance, closeSession, applyDriver, matchModel, balanceSite } from './ocpp.js';
 import appApi, { newInviteCode, appTag } from './app.js';
 import { audit, describe } from './audit.js';
+import { getSetting, getSettingPublic, setSetting } from './settings.js';
+import { siteStatus } from './power.js';
+import { sendWhatsApp, sendEmail, notifyAdmins, recentNotifications } from './notify.js';
 import { randomBytes } from 'node:crypto';
 
 const TZ = process.env.TZ_LOCAL || 'America/Montevideo';
@@ -90,6 +93,17 @@ export default async function api(app) {
     await q('UPDATE admins SET last_login_at=now() WHERE id=$1', [admin.id]);
     await audit({ actorId: admin.id, actorName: admin.name || admin.email, action: 'ingreso', entity: 'admins', entityId: admin.id, summary: 'entró al panel', ip: req.ip });
     return { token: app.jwt.sign({ sub: admin.id, email: admin.email, role: 'admin' }, { expiresIn: '12h' }), name: admin.name, email: admin.email, level: admin.role };
+  });
+
+  // Aviso del respaldo nocturno (lo llama el cron de pve02, solo desde la red interna)
+  app.post('/internal/backup', async (req) => {
+    const ip = req.ip.replace('::ffff:', '');
+    if (!['127.0.0.1', '192.168.99.3', '::1'].includes(ip)) throw new HttpError(403, 'solo desde la red interna');
+    const ok = !!req.body?.ok;
+    await setSetting('backup_status', { ok, at: new Date().toISOString(), file: req.body?.file || null, bytes: req.body?.bytes || null });
+    await audit({ actorType: 'sistema', actorName: 'Sistema', action: 'comando', entity: 'backup', summary: ok ? `hizo el respaldo nocturno (${Math.round((req.body?.bytes || 0) / 1024)} KB)` : 'no pudo hacer el respaldo nocturno', ip });
+    if (!ok) await notifyAdmins('respaldo', 'Falló el respaldo nocturno', 'El respaldo de la base de Eléctricos no se pudo hacer. Revisá pve02 (/mnt/backup-cluster/electricos/respaldos.log).', 'backup');
+    return { ok: true };
   });
 
   // App de usuarios finales (QR, iniciar/detener, reservas, pagos)
@@ -222,6 +236,41 @@ export default async function api(app) {
     priv.get('/charger-models/match', async (req) => matchModel(req.query.vendor, req.query.model));
     priv.post('/chargers/:id/apply-driver', async (req) => applyDriver(req.params.id));
 
+    // ---------- Potencia por sitio ----------
+    priv.get('/power', async () => {
+      const sites = await many('SELECT id FROM sites WHERE contracted_kw IS NOT NULL OR max_amps IS NOT NULL ORDER BY name');
+      return Promise.all(sites.map((x) => siteStatus(x.id)));
+    });
+    priv.post('/sites/:id/rebalance', async (req) => { await balanceSite(Number(req.params.id)); return siteStatus(Number(req.params.id)); });
+
+    // ---------- Avisos: WhatsApp, correo y destinatarios ----------
+    const SETTINGS = ['whatsapp', 'email', 'avisos'];
+    priv.get('/settings', async () => Object.fromEntries(await Promise.all([...SETTINGS, 'backup_status'].map(async (k) => [k, await getSettingPublic(k)]))));
+    priv.put('/settings/:name', async (req) => {
+      if (!SETTINGS.includes(req.params.name)) throw notFound();
+      if (req.admin.role !== 'admin') throw new HttpError(403, 'solo un administrador cambia esta configuración');
+      return setSetting(req.params.name, req.body || {});
+    });
+    priv.post('/settings/test', async (req) => {
+      const { channel, to } = req.body || {};
+      const text = 'Mensaje de prueba de Eléctricos. Si te llegó, los avisos están funcionando.';
+      const r = channel === 'email' ? await sendEmail(to, 'Prueba de avisos', text, { kind: 'prueba' }) : await sendWhatsApp(to, `⚡ ${text}`, { kind: 'prueba' });
+      if (!r.ok) throw new HttpError(502, r.error);
+      return r;
+    });
+    priv.get('/settings/whatsapp/status', async () => {
+      const wa = await getSetting('whatsapp');
+      if (!wa.url || !wa.session || !wa.api_key) return { status: 'sin configurar' };
+      try {
+        const res = await fetch(`${wa.url.replace(/\/$/, '')}/api/sessions/${encodeURIComponent(wa.session)}`, { headers: { 'X-API-Key': wa.api_key }, signal: AbortSignal.timeout(8000) });
+        const j = await res.json().catch(() => ({}));
+        return { status: res.ok ? (j.status || j.state || 'desconocido') : `error ${res.status}`, phone: j.phone || j.me?.id || null };
+      } catch (e) {
+        return { status: 'sin conexión', error: e.message };
+      }
+    });
+    priv.get('/notifications', async () => recentNotifications(200));
+
     // ---------- Auditoría ----------
     priv.get('/audit', async (req, reply) => {
       const { q: text, entity, actor, action, from, to, format } = req.query;
@@ -285,7 +334,7 @@ export default async function api(app) {
     crud(priv, {
       path: '/sites',
       table: 'sites',
-      fields: ['name', 'kind', 'address', 'max_amps', 'tariff_id', 'line_owner', 'owner_name', 'owner_contact'],
+      fields: ['name', 'kind', 'address', 'max_amps', 'tariff_id', 'line_owner', 'owner_name', 'owner_contact', 'phases', 'voltage', 'contracted_kw', 'punta_kw', 'power_strategy'],
       list: `SELECT s.*, t.name AS tariff_name,
                (SELECT count(*) FROM chargers c WHERE c.site_id=s.id) AS chargers,
                (SELECT count(*) FROM accounts a WHERE a.site_id=s.id) AS accounts

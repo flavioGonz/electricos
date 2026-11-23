@@ -639,3 +639,19 @@ label.u-row > span { flex: 0 0 92px; font-size: 15px; }
 .temp-pass { padding: 18px; border-radius: 14px; background: var(--fill-2); text-align: center; font-size: 24px; font-weight: 600; letter-spacing: 0.06em; user-select: all; }
 textarea.mono { font: 12.5px/1.5 var(--mono); }
 .form-grid > .form-sec:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+.set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
+.set-card { display: flex; flex-direction: column; gap: 14px; padding: 18px; }
+.set-card.wide { grid-column: 1 / -1; }
+.set-card > header { display: flex; align-items: flex-start; gap: 12px; }
+.set-card > header > div { flex: 1; }
+.set-card h3 { margin: 0; font: 650 16px/1.2 var(--font-display); letter-spacing: -0.02em; }
+.set-card header p { margin: 2px 0 0; font-size: 13px; }
+.set-card > footer { display: flex; justify-content: flex-end; margin-top: auto; }
+.sec-title { margin: 0; font: 650 18px var(--font-display); letter-spacing: -0.02em; }
+.power-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.card.power { display: grid; gap: 10px; padding: 16px; }
+.pbar { height: 8px; border-radius: 99px; background: var(--fill-2); overflow: hidden; }
+.pbar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #34c759, #0a84ff); transition: width 0.6s var(--ease-out); }
+.pbar.hot span { background: linear-gradient(90deg, #ff9500, #ff3b30); }
+.plist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13.5px; }
+.plist li { display: flex; align-items: center; gap: 8px; }

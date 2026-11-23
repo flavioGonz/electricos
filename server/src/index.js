@@ -8,6 +8,8 @@ import api, { ensureAdmin } from './api.js';
 import { createOcppServer } from './ocpp.js';
 import { migrate } from './migrate.js';
 import { startMonitor } from './monitor.js';
+import { events } from './ocpp.js';
+import { onSessionClosed } from './notify.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -48,6 +50,7 @@ export async function start() {
   await app.listen({ port: PORT, host: HOST });
   app.log.info(`OCPP en ws://${HOST}:${PORT}/ocpp/<id-del-cargador>`);
   const stopMonitor = startMonitor(app.log);
+  events.on('session-closed', (sess) => onSessionClosed(sess).catch((e) => app.log.warn(`aviso de fin de carga: ${e.message}`)));
   const stop = async () => {
     stopMonitor();
     await app.close();

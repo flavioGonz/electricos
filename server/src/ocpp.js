@@ -4,6 +4,7 @@ import { RPCServer } from 'ocpp-rpc';
 import { EventEmitter } from 'node:events';
 import { one, many, q, tx } from './db.js';
 import { priceSession, rateAt } from './billing.js';
+import { rebalance } from './power.js';
 
 export const events = new EventEmitter(); // eventos para el panel en vivo (SSE)
 events.setMaxListeners(100);
@@ -116,7 +117,13 @@ export function parseMeterValue(mv) {
 }
 
 /** Cierra una sesión: valoriza, guarda e imputa el cargo a la cuenta. Idempotente. */
-export async function closeSession(sessionId, { meterStop, timestamp, reason }) {
+export async function closeSession(sessionId, opts) {
+  let closedNow = null;
+  const r = await closeSessionTx(sessionId, opts, (u) => { closedNow = u; });
+  if (closedNow) events.emit('session-closed', closedNow);
+  return r;
+}
+async function closeSessionTx(sessionId, { meterStop, timestamp, reason }, onClosed) {
   return tx(async (db) => {
     const s = (await db.query('SELECT * FROM sessions WHERE id=$1 FOR UPDATE', [sessionId])).rows[0];
     if (!s || s.status === 'completed') return s;
@@ -153,6 +160,7 @@ export async function closeSession(sessionId, { meterStop, timestamp, reason }) 
         [s.account_id, -amount, `Carga ${(energy_wh / 1000).toFixed(2)} kWh en ${s.charger_id}`, s.id],
       );
     }
+    onClosed(updated);
     return updated;
   });
 }
@@ -169,37 +177,31 @@ function logMessage(chargerId, direction, raw) {
   }
 }
 
-/** Reparte la potencia del sitio entre las sesiones activas (Smart Charging, TxProfile). */
+/** Reparte la potencia del sitio entre las sesiones activas (Smart Charging, TxProfile). Ver power.js. */
 export async function balanceSite(siteId, log = console) {
-  if (!siteId) return;
-  const site = await one('SELECT * FROM sites WHERE id=$1', [siteId]);
-  if (!site || !site.max_amps) return;
-  const active = await many(
-    `SELECT s.id, s.charger_id, s.connector_id, c.max_amps FROM sessions s JOIN chargers c ON c.id=s.charger_id
-      WHERE c.site_id=$1 AND s.status='active' ORDER BY s.started_at`,
-    [siteId],
-  );
-  if (!active.length) return;
-  const share = Math.floor(site.max_amps / active.length);
-  for (const s of active) {
-    const limit = Math.max(6, Math.min(share, s.max_amps)); // 6 A es el mínimo de IEC 61851
-    const client = clients.get(s.charger_id);
-    if (!client) continue;
-    client
-      .call('SetChargingProfile', {
-        connectorId: s.connector_id,
-        csChargingProfiles: {
-          chargingProfileId: 100 + s.connector_id,
-          transactionId: s.id,
-          stackLevel: 0,
-          chargingProfilePurpose: 'TxProfile',
-          chargingProfileKind: 'Relative',
-          chargingSchedule: { chargingRateUnit: 'A', chargingSchedulePeriod: [{ startPeriod: 0, limit }] },
-        },
-      })
-      .then((r) => events.emit('change', { type: 'power', chargerId: s.charger_id, limit, status: r.status }))
-      .catch((err) => log.warn?.(`SetChargingProfile ${s.charger_id}: ${err.message}`));
-  }
+  return rebalance(siteId, async (chargerId, connectorId, sessionId, limit) => {
+    const client = clients.get(chargerId);
+    if (!client) throw new Error('no conectado');
+    const r = await client.call('SetChargingProfile', {
+      connectorId,
+      csChargingProfiles: {
+        chargingProfileId: 100 + connectorId,
+        transactionId: sessionId,
+        stackLevel: 0,
+        chargingProfilePurpose: 'TxProfile',
+        chargingProfileKind: 'Relative',
+        chargingSchedule: { chargingRateUnit: 'A', chargingSchedulePeriod: [{ startPeriod: 0, limit }] },
+      },
+    });
+    if (r.status !== 'Accepted') throw new Error(`el cargador respondió ${r.status}`);
+    events.emit('change', { type: 'power', chargerId, limit });
+  }, log);
+}
+
+/** Recalcula todos los sitios con límite (lo llama el monitor cada minuto: cubre cambios de franja y autos que se llenan). */
+export async function balanceAll(log = console) {
+  const sites = await many('SELECT DISTINCT c.site_id FROM sessions s JOIN chargers c ON c.id=s.charger_id WHERE s.status=$1 AND c.site_id IS NOT NULL', ['active']);
+  for (const { site_id } of sites) await balanceSite(site_id, log).catch(() => {});
 }
 
 async function chargerSite(chargerId) {

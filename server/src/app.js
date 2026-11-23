@@ -169,7 +169,7 @@ export default async function appApi(app) {
     priv.get('/me', async (req) => {
       const u = req.appUser;
       const account = await one('SELECT id, name, unit, billing_mode, credit_limit, site_id FROM accounts WHERE id=$1', [u.account_id]);
-      const user = await one('SELECT id, name, email, phone FROM app_users WHERE id=$1', [u.id]);
+      const user = await one('SELECT id, name, email, phone, notify_whatsapp, notify_email FROM app_users WHERE id=$1', [u.id]);
       const active = await many(
         `SELECT x.id, x.charger_id, c.name AS charger_name, x.connector_id, x.started_at, x.last_meter_wh - x.meter_start_wh AS energy_wh, x.power_w
            FROM sessions x JOIN chargers c ON c.id=x.charger_id WHERE x.account_id=$1 AND x.status='active' ORDER BY x.started_at`,
@@ -192,6 +192,16 @@ export default async function appApi(app) {
         [u.account_id],
       );
       return { user, account, balance: await accountBalance(u.account_id), active, recent, reservations, month };
+    });
+
+    priv.patch('/me', async (req) => {
+      const d = {};
+      for (const k of ['notify_whatsapp', 'notify_email']) if (typeof req.body?.[k] === 'boolean') d[k] = req.body[k];
+      if (typeof req.body?.phone === 'string') d.phone = req.body.phone.trim() || null;
+      const keys = Object.keys(d);
+      if (!keys.length) return { ok: true };
+      await q(`UPDATE app_users SET ${keys.map((k, i) => `${k}=$${i + 2}`).join(',')} WHERE id=$1`, [req.appUser.id, ...Object.values(d)]);
+      return { ok: true };
     });
 
     priv.get('/chargers', async (req) => {

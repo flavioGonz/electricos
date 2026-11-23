@@ -34,6 +34,34 @@ async function downloadCsv(path, filename) {
 }
 
 // ---------- Panel ----------
+function PowerBoard() {
+  const { data } = useApi('/power', { live: true });
+  if (!data || !data.length) return null;
+  return (
+    <>
+      <h3 style={{ margin: '30px 0 12px' }}>Potencia por sitio</h3>
+      <div className="power-grid">
+        {data.map((p) => {
+          const pct = p.available_kw ? Math.min(100, (p.used_kw / p.available_kw) * 100) : 0;
+          return (
+            <div key={p.site_id} className="card power">
+              <div className="row between"><b>{p.name}</b><span className="muted kwh">{String(p.used_kw).replace('.', ',')} de {String(p.available_kw).replace('.', ',')} kW</span></div>
+              <div className={'pbar' + (pct > 92 ? ' hot' : '')}><span style={{ width: `${pct}%` }} /></div>
+              {p.sessions.length === 0 ? <div className="subtle" style={{ fontSize: 13 }}>Sin cargas en este momento.</div> : (
+                <ul className="plist">{p.sessions.map((x) => (
+                  <li key={x.id}><span className="grow">{x.charger}<span className="subtle"> · {x.account || 'sin cuenta'}</span></span>
+                    {Number(x.limit_amps) === 0 ? <span className="badge mini warn" data-tip="No alcanza la potencia: arranca sola cuando se libere"><span className="dot" />En espera</span>
+                      : <span className="kwh" data-tip={x.limit_amps != null ? `Límite asignado: ${x.limit_amps} A por fase` : 'Sin límite asignado todavía'}>{x.power_w ? `${(x.power_w / 1000).toFixed(1).replace('.', ',')} kW` : '—'}{x.limit_amps != null && <span className="subtle"> / {x.limit_amps} A</span>}</span>}
+                  </li>))}</ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 export function Dashboard({ go }) {
   const { data } = useApi('/dashboard', { live: true });
   const chargers = useApi('/chargers', { live: true });
@@ -56,6 +84,7 @@ export function Dashboard({ go }) {
           </div>
         </>
       )}
+      <PowerBoard />
       <h3 style={{ margin: '30px 0 12px' }}>Cargas en curso</h3>
       {active.length === 0 ? <div className="card muted">Nadie está cargando en este momento.</div> : (
         <div className="card flush"><div className="tablewrap"><table className="table">
@@ -243,14 +272,19 @@ export function Sites() {
   const client = (v) => (v.line_owner || 'cliente') === 'cliente';
   return (
     <CrudPage title="Sitios" singular="sitio" icon="building" path="/sites" desc="Cada edificio o barrio define su tarifa, el límite de potencia y a quién se le liquida la energía."
-      defaults={{ kind: 'edificio', line_owner: 'cliente' }}
+      defaults={{ kind: 'edificio', line_owner: 'cliente', phases: 3, voltage: 230, power_strategy: 'igual' }}
       emptyText="Un sitio agrupa cargadores y cuentas."
       fields={[
         { name: 'name', label: 'Nombre', required: true, placeholder: 'Edificio Rambla' },
         { name: 'kind', label: 'Tipo', type: 'select', required: true, half: true, options: [{ value: 'edificio', label: 'Edificio' }, { value: 'barrio', label: 'Barrio' }, { value: 'otro', label: 'Otro' }] },
         { name: 'tariff_id', label: 'Tarifa', type: 'select', numeric: true, half: true, options: () => tariffs.map((t) => ({ value: t.id, label: t.name })) },
         { name: 'address', label: 'Dirección' },
-        { name: 'max_amps', label: 'Límite de corriente total (A)', type: 'number', step: 1, help: 'Se reparte entre las cargas activas para no superar la potencia contratada.' },
+        { name: 'hp', type: 'heading', label: 'Reparto de potencia' },
+        { name: 'contracted_kw', label: 'Potencia para cargadores (kW)', type: 'number', half: true, help: 'Lo que los cargadores pueden usar entre todos. Vacío: sin límite.' },
+        { name: 'punta_kw', label: 'En horario punta (kW)', type: 'number', half: true, help: 'Opcional, para cargar menos en punta.' },
+        { name: 'phases', label: 'Suministro', type: 'select', numeric: true, half: true, required: true, options: [{ value: 3, label: 'Trifásico' }, { value: 1, label: 'Monofásico' }] },
+        { name: 'voltage', label: 'Tensión (V)', type: 'number', step: 1, half: true },
+        { name: 'power_strategy', label: 'Cómo se reparte', type: 'select', required: true, options: [{ value: 'igual', label: 'En partes iguales entre los autos que cargan' }, { value: 'llegada', label: 'Por orden de llegada: el primero carga al máximo' }], help: 'Si no alcanza para todos, los últimos en llegar esperan y arrancan solos cuando se libera potencia.' },
         { name: 'hs', type: 'heading', label: 'Suministro de UTE' },
         { name: 'line_owner', label: 'Titular', type: 'select', required: true, options: [{ value: 'cliente', label: 'El cliente: se le liquida el costo de la energía' }, { value: 'operador', label: 'Infratec: paga la factura de UTE' }] },
         { name: 'owner_name', label: 'Propietario de la línea', placeholder: 'Consorcio Edificio Rambla', half: true, show: client },
@@ -259,7 +293,7 @@ export function Sites() {
       columns={[
         { label: 'Sitio', render: (r) => <><b>{r.name}</b><div className="subtle" style={{ fontSize: 12 }}>{r.address || r.kind}</div></> },
         { label: 'Tarifa', render: (r) => r.tariff_name || <span className="subtle">Sin tarifa</span> },
-        { label: 'Límite', render: (r) => (r.max_amps ? `${r.max_amps} A` : '—') },
+        { label: 'Potencia', render: (r) => (r.contracted_kw ? <>{String(r.contracted_kw).replace('.', ',')} kW{r.punta_kw ? <div className="subtle" style={{ fontSize: 12 }}>{String(r.punta_kw).replace('.', ',')} kW en punta</div> : null}</> : <span className="subtle">Sin límite</span>) },
         { label: 'Suministro', render: (r) => (r.line_owner === 'cliente' ? r.owner_name || 'Cliente' : 'Infratec') },
         { label: 'Cargadores', right: true, render: (r) => r.chargers },
         { label: 'Cuentas', right: true, render: (r) => r.accounts },

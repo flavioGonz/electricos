@@ -9,7 +9,7 @@ import { api, getToken, setToken } from './api.js';
 import { useApi } from './hooks.js';
 import UserApp from './UserApp.jsx';
 import LoginScene from './components/LoginScene.jsx';
-import { AdminUsers, AppUsers, ChargerModels, Audit } from './settings.jsx';
+import { AdminUsers, AppUsers, ChargerModels, Audit, Notifications } from './settings.jsx';
 import { Tooltip } from 'react-tooltip';
 import { Dashboard, Chargers, Tariffs, Sites, Accounts, Cards, Sessions, Report, OwnersReport, Alerts, Reservations, Payments } from './pages.jsx';
 
@@ -28,6 +28,7 @@ const NAV = [
   { to: '/sitios', label: 'Sitios', icon: 'pin', section: 'Configuración', page: Sites },
   { to: '/drivers', label: 'Cargadores compatibles', icon: 'wrench', section: 'Configuración', page: ChargerModels },
   { to: '/usuarios-app', label: 'Usuarios de la app', icon: 'phone', section: 'Configuración', page: AppUsers },
+  { to: '/avisos', label: 'Avisos', icon: 'bell', section: 'Configuración', page: Notifications, roles: ['admin', 'operador'] },
   { to: '/usuarios', label: 'Usuarios del panel', icon: 'lock', section: 'Configuración', page: AdminUsers, roles: ['admin'] },
   { to: '/auditoria', label: 'Auditoría', icon: 'eye', section: 'Configuración', page: Audit, roles: ['admin', 'operador'] },
 ];

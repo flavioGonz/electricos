@@ -1,6 +1,7 @@
 // Monitoreo para el servicio de mantenimiento: abre y cierra alertas, y avisa por webhook (Node-RED, WhatsApp, email).
 import { many, q, one } from './db.js';
-import { events } from './ocpp.js';
+import { events, balanceAll } from './ocpp.js';
+import { notifyAdmins } from './notify.js';
 
 const OFFLINE_MIN = Number(process.env.ALERT_OFFLINE_MINUTES || 10);
 const STUCK_HOURS = Number(process.env.ALERT_STUCK_HOURS || 14);
@@ -22,6 +23,9 @@ async function close(chargerId, kind) {
 }
 
 async function notify(alert, log) {
+  const c0 = await one('SELECT c.name, s.name AS site FROM chargers c LEFT JOIN sites s ON s.id=c.site_id WHERE c.id=$1', [alert.charger_id]).catch(() => null);
+  notifyAdmins('alerta', 'Alerta de mantenimiento', `${alert.message}${c0?.site ? ` (${c0.site})` : ''}`, `alert:${alert.id}`)
+    .then(() => q('UPDATE alerts SET notified=true WHERE id=$1', [alert.id])).catch((e) => log.warn?.(`aviso de alerta: ${e.message}`));
   const url = process.env.ALERT_WEBHOOK_URL;
   if (!url) return;
   try {
@@ -61,7 +65,7 @@ export async function checkOnce(log = console) {
 }
 
 export function startMonitor(log = console, everyMs = 60_000) {
-  const run = () => checkOnce(log).catch((err) => log.error?.(err));
+  const run = () => checkOnce(log).then(() => balanceAll(log)).catch((err) => log.error?.(err));
   const t = setInterval(run, everyMs);
   setTimeout(run, 5_000);
   return () => clearInterval(t);

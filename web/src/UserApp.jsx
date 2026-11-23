@@ -346,7 +346,9 @@ function ReservationsTab({ me, reload }) {
   );
 }
 
-function AccountTab({ me, config, logout }) {
+function AccountTab({ me, config, logout, reload }) {
+  const [phone, setPhone] = useState(me.user.phone || '');
+  const pref = (body, msg) => uapi('/me', { method: 'PATCH', body }).then(() => { toast.ok(msg); reload(); }).catch((e) => toast.err(e.message));
   const [amount, setAmount] = useState(500);
   const [busy, setBusy] = useState(false);
   const pay = async () => {
@@ -360,6 +362,14 @@ function AccountTab({ me, config, logout }) {
       <Group>
         <Row icon="users" tone="blue" label={me.user.name} sub={me.user.email} />
         <Row icon="building" tone="gray" label={me.account.name} sub={me.account.unit || (prepaid ? 'Cuenta prepaga' : 'Cuenta con liquidación mensual')} />
+      </Group>
+      <Group title="Avisos" foot="Te avisamos cuando termina tu carga y cuando tu saldo está bajo.">
+        <label className="u-row"><span className="u-ico green"><Icon name="whatsapp" size={16} /></span><span className="u-row-main"><span className="u-row-label">WhatsApp</span></span>
+          <input type="checkbox" checked={!!me.user.notify_whatsapp} onChange={(e) => pref({ notify_whatsapp: e.target.checked }, e.target.checked ? 'Avisos por WhatsApp activados' : 'Avisos por WhatsApp apagados')} /></label>
+        <label className="u-row"><span className="u-ico blue"><Icon name="mail" size={16} /></span><span className="u-row-main"><span className="u-row-label">Correo</span></span>
+          <input type="checkbox" checked={!!me.user.notify_email} onChange={(e) => pref({ notify_email: e.target.checked }, e.target.checked ? 'Avisos por correo activados' : 'Avisos por correo apagados')} /></label>
+        <label className="u-row"><span className="u-ico gray"><Icon name="phone" size={16} /></span>
+          <input type="tel" value={phone} placeholder="Tu celular" onChange={(e) => setPhone(e.target.value)} onBlur={() => phone !== (me.user.phone || '') && pref({ phone }, 'Celular guardado')} /></label>
       </Group>
       <Group title={prepaid ? 'Saldo' : 'Consumo pendiente'} foot={prepaid ? null : 'Tu consumo se suma a la liquidación mensual de tu unidad.'}>
         <Row icon="dollar" tone={me.balance > 0 ? 'green' : 'orange'} label={prepaid ? 'Saldo disponible' : 'A pagar'} value={money(prepaid ? me.balance : Math.max(0, -me.balance))} />
@@ -433,7 +443,7 @@ export default function UserApp() {
   if (route.tab === 'charger') page = <ChargerView id={route.id} me={me} onAuth={() => setAuth(true)} reload={load} back={me ? () => nav({ tab: 'chargers' }) : null} />;
   else if (route.tab === 'chargers') page = <ChargerList openCharger={(id) => nav({ tab: 'charger', id })} />;
   else if (route.tab === 'reservas') page = <ReservationsTab me={me} reload={load} />;
-  else if (route.tab === 'cuenta') page = <AccountTab me={me} config={config} logout={logout} />;
+  else if (route.tab === 'cuenta') page = <AccountTab me={me} config={config} logout={logout} reload={load} />;
   else page = <Home me={me} reload={load} open={(tab) => nav({ tab })} />;
 
   const current = route.tab === 'charger' ? 'chargers' : route.tab;
