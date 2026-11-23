@@ -1,7 +1,7 @@
 // API REST para el panel de administración.
 import bcrypt from 'bcryptjs';
 import { one, many, q } from './db.js';
-import { clients, events, normTag, sendLocalList, accountBalance, closeSession, applyDriver, matchModel, balanceSite } from './ocpp.js';
+import { clients, events, normTag, sendLocalList, accountBalance, closeSession, applyDriver, matchModel, balanceSite, redactConfig } from './ocpp.js';
 import appApi, { newInviteCode, appTag } from './app.js';
 import { audit, describe } from './audit.js';
 import { getSetting, getSettingPublic, setSetting } from './settings.js';
@@ -651,8 +651,12 @@ export default async function api(app) {
     priv.post('/chargers/:id/reset', async (req) => online(req.params.id).call('Reset', { type: req.body?.type === 'Hard' ? 'Hard' : 'Soft' }));
     priv.post('/chargers/:id/unlock', async (req) => online(req.params.id).call('UnlockConnector', { connectorId: Number(req.body?.connectorId ?? 1) }));
     priv.post('/chargers/:id/local-list', async (req) => sendLocalList(req.params.id));
-    priv.post('/chargers/:id/configuration', async (req) => online(req.params.id).call('ChangeConfiguration', { key: String(req.body?.key), value: String(req.body?.value) }));
-    priv.get('/chargers/:id/configuration', async (req) => online(req.params.id).call('GetConfiguration', {}));
+    priv.post('/chargers/:id/configuration', async (req) => {
+      // La contraseña OCPP va por /ocpp-password, que además guarda el hash; por acá el cargador quedaría sin poder reconectar
+      if (String(req.body?.key ?? '').toLowerCase() === 'authorizationkey') throw new HttpError(400, 'la contraseña del cargador se cambia desde «Contraseña OCPP»');
+      return online(req.params.id).call('ChangeConfiguration', { key: String(req.body?.key), value: String(req.body?.value) });
+    });
+    priv.get('/chargers/:id/configuration', async (req) => redactConfig(await online(req.params.id).call('GetConfiguration', {})));
     priv.get('/chargers/:id/log', async (req) => many('SELECT * FROM ocpp_log WHERE charger_id=$1 ORDER BY ts DESC LIMIT 200', [req.params.id]));
 
     // Cierre manual de una sesión colgada (el cargador nunca mandó StopTransaction)

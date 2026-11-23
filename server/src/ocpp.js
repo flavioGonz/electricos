@@ -169,12 +169,29 @@ async function closeSessionTx(sessionId, { meterStop, timestamp, reason }, onClo
   });
 }
 
+/** Claves de configuración que nunca se guardan ni se muestran en claro (la contraseña OCPP del cargador). */
+const SECRET_KEYS = new Set(['authorizationkey']);
+const isSecretKey = (k) => SECRET_KEYS.has(String(k ?? '').toLowerCase());
+
+/** Tapa la contraseña en ChangeConfiguration y en las respuestas de GetConfiguration. */
+export function redactConfig(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (isSecretKey(payload.key) && 'value' in payload) return { ...payload, value: payload.value ? '***' : '' };
+  if (Array.isArray(payload.configurationKey)) {
+    return {
+      ...payload,
+      configurationKey: payload.configurationKey.map((k) => (isSecretKey(k?.key) && k.value ? { ...k, value: '***' } : k)),
+    };
+  }
+  return payload;
+}
+
 function logMessage(chargerId, direction, raw) {
   try {
     const msg = JSON.parse(raw);
     const [type, , a, b] = msg;
     const action = type === 2 ? a : type === 3 ? 'CallResult' : 'CallError';
-    const payload = type === 2 ? b : a;
+    const payload = redactConfig(type === 2 ? b : a);
     q('INSERT INTO ocpp_log(charger_id, direction, action, payload) VALUES ($1,$2,$3,$4)', [chargerId, direction, action, payload ?? null]).catch(() => {});
   } catch {
     /* mensaje no JSON: lo ignora ocpp-rpc */
