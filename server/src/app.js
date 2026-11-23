@@ -1,4 +1,5 @@
 // API de la app del usuario: registro, QR del cargador, iniciar/detener, consumo, reservas y pagos.
+import { lockMessage, registerFailure, clearFailures } from './security.js';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
 import { one, many, q, tx } from './db.js';
@@ -118,7 +119,14 @@ export default async function appApi(app) {
   app.post('/login', async (req) => {
     const { email, password } = req.body || {};
     const u = await one('SELECT * FROM app_users WHERE email=$1 AND active', [String(email || '').trim().toLowerCase()]);
-    if (!u || !(await bcrypt.compare(String(password || ''), u.password_hash))) throw new HttpError(401, 'Email o contraseña incorrectos');
+    const locked = lockMessage(u);
+    if (locked) throw new HttpError(423, locked[0].toUpperCase() + locked.slice(1));
+    if (!u || !(await bcrypt.compare(String(password || ''), u.password_hash))) {
+      const f = u ? await registerFailure('app_users', u.id) : {};
+      if (f.locked) throw new HttpError(423, 'Demasiados intentos fallidos. Probá de nuevo en unos minutos.');
+      throw new HttpError(401, 'Email o contraseña incorrectos');
+    }
+    await clearFailures('app_users', u.id);
     return { token: app.jwt.sign({ sub: u.id, acc: u.account_id, role: 'user' }, { expiresIn: '90d' }), user: { id: u.id, name: u.name, email: u.email } };
   });
 

@@ -1,5 +1,6 @@
 // Configuración: usuarios del panel, usuarios de la app, drivers de cargadores y auditoría.
 import React, { useEffect, useMemo, useState } from 'react';
+import QRCode from 'qrcode';
 import { Modal, Field, PageHeader, Loading, Empty, Switch, Segmented } from './components/ui.jsx';
 import { Icon } from './components/icons.jsx';
 import CrudPage from './Crud.jsx';
@@ -32,15 +33,27 @@ export function AdminUsers({ me }) {
   const [pass, setPass] = useState(null);
   const reset = (row) => act(() => api(`/admins/${row.id}/reset-password`, { method: 'POST' })).then((r) => setTemp({ who: row.name, password: r.temp_password })).catch(() => {});
   const changeOwn = () => act(() => api('/me/password', { method: 'POST', body: pass }), 'Contraseña cambiada').then(() => setPass(null)).catch(() => {});
+  const [mfa, setMfa] = useState(false);
+  const [sec, setSec] = useState(false);
+  const unlock = (row, reload) => act(() => api(`/admins/${row.id}/unlock`, { method: 'POST' }), `${row.name} puede volver a entrar`).then(reload).catch(() => {});
+  const reset2fa = (row, reload) => act(() => api(`/admins/${row.id}/reset-2fa`, { method: 'POST' }), 'Doble factor desactivado: lo tiene que volver a configurar').then(reload).catch(() => {});
   return (
     <>
       <CrudPage title="Usuarios del panel" singular="usuario" icon="users" path="/admins"
         desc="Quién entra a este panel y qué puede hacer. Cada acción queda registrada en la auditoría."
         defaults={{ role: 'operador', active: true }}
-        extraActions={<button className="btn sec" onClick={() => setPass({ current: '', next: '' })}><Icon name="lock" size={16} />Mi contraseña</button>}
+        extraActions={<>
+          {me?.level === 'admin' && <button className="btn ghost icon" aria-label="Política de seguridad" data-tip="Intentos, bloqueo y doble factor obligatorio" onClick={() => setSec(true)}><Icon name="settings" size={16} /></button>}
+          <button className="btn sec" onClick={() => setMfa(true)}><Icon name="checkCircle" size={16} />Doble factor</button>
+          <button className="btn sec" onClick={() => setPass({ current: '', next: '' })}><Icon name="lock" size={16} />Mi contraseña</button>
+        </>}
         canDelete={(r) => r.id !== me?.id}
         onSaved={(row) => row?.temp_password && setTemp({ who: row.name, password: row.temp_password })}
-        rowActions={(row) => <button className="btn ghost icon sm" aria-label="Restablecer contraseña" data-tip="Generar una contraseña nueva" onClick={() => reset(row)}><Icon name="repeat" size={15} /></button>}
+        rowActions={(row, reload) => <>
+          {row.locked_until && <button className="btn ghost icon sm" aria-label="Desbloquear" data-tip="Quitar el bloqueo por intentos fallidos" onClick={() => unlock(row, reload)}><Icon name="lock" size={15} /></button>}
+          {row.totp_enabled && row.id !== me?.id && me?.level === 'admin' && <button className="btn ghost icon sm" aria-label="Quitar doble factor" data-tip="Quitar el doble factor (perdió el teléfono)" onClick={() => reset2fa(row, reload)}><Icon name="x" size={15} /></button>}
+          <button className="btn ghost icon sm" aria-label="Restablecer contraseña" data-tip="Generar una contraseña nueva" onClick={() => reset(row)}><Icon name="repeat" size={15} /></button>
+        </>}
         fields={[
           { name: 'name', label: 'Nombre', required: true, placeholder: 'Nombre y apellido' },
           { name: 'email', label: 'Email', type: 'email', required: true, createOnly: true, placeholder: 'nombre@empresa.com' },
@@ -53,9 +66,12 @@ export function AdminUsers({ me }) {
           { label: 'Usuario', render: (r) => <><b>{r.name}</b>{r.id === me?.id && <span className="subtle"> · vos</span>}<div className="subtle">{r.email}</div></> },
           { label: 'Rol', render: (r) => <span className={`badge mini ${ROLE_TONE[r.role]}`}><span className="dot" />{roleLabel(r.role)}</span> },
           { label: 'Último ingreso', render: (r) => (r.last_login_at ? <span data-tip={dt(r.last_login_at)}>{ago(r.last_login_at)}</span> : <span className="subtle">Nunca</span>) },
-          { label: 'Estado', render: (r) => (r.active ? <span className="badge mini ok"><span className="dot" />Activo</span> : <span className="badge mini gris"><span className="dot" />Deshabilitado</span>) },
+          { label: 'Doble factor', render: (r) => (r.totp_enabled ? <span className="badge mini ok"><span className="dot" />Activo</span> : <span className="subtle">No</span>) },
+          { label: 'Estado', render: (r) => (r.locked_until ? <span className="badge mini falla" data-tip={`Bloqueado hasta ${dt(r.locked_until)}`}><span className="dot" />Bloqueado</span> : r.active ? <span className="badge mini ok"><span className="dot" />Activo</span> : <span className="badge mini gris"><span className="dot" />Deshabilitado</span>) },
         ]}
       />
+      {mfa && <TwoFactor onClose={() => setMfa(false)} />}
+      {sec && <SecurityPolicy onClose={() => setSec(false)} />}
       {temp && <TempPassword {...temp} onClose={() => setTemp(null)} />}
       {pass && (
         <Modal icon="lock" title="Cambiar mi contraseña" size="sm" onClose={() => setPass(null)}
@@ -67,6 +83,70 @@ export function AdminUsers({ me }) {
         </Modal>
       )}
     </>
+  );
+}
+
+// ---------- Doble factor del propio usuario ----------
+export function TwoFactor({ onClose }) {
+  const { data: me, reload } = useApi('/me');
+  const [setup, setSetup] = useState(null);
+  const [svg, setSvg] = useState('');
+  const [code, setCode] = useState('');
+  const [pwd, setPwd] = useState('');
+  const start = () => act(() => api('/me/2fa/setup', { method: 'POST' })).then(async (r) => { setSetup(r); setSvg(await QRCode.toString(r.uri, { type: 'svg', margin: 0, errorCorrectionLevel: 'M', color: { dark: '#1d1d1f', light: '#ffffff' } })); }).catch(() => {});
+  const enable = () => act(() => api('/me/2fa/enable', { method: 'POST', body: { code } }), 'Doble factor activado').then(() => { setSetup(null); setCode(''); reload(); }).catch(() => setCode(''));
+  const disable = () => act(() => api('/me/2fa/disable', { method: 'POST', body: { password: pwd } }), 'Doble factor desactivado').then(() => { setPwd(''); reload(); }).catch(() => {});
+  return (
+    <Modal icon="checkCircle" tone="green" title="Doble factor" subtitle="Un código del teléfono además de la contraseña" onClose={onClose}
+      footer={<><button className="btn sec" data-close onClick={onClose}>Cerrar</button>
+        {me && !me.totp && setup && <button className="btn" disabled={code.replace(/\D/g, '').length < 6} onClick={enable}><Icon name="check" size={16} />Activar</button>}
+        {me && !me.totp && !setup && <button className="btn" onClick={start}>Empezar</button>}
+        {me?.totp && <button className="btn danger" disabled={!pwd} onClick={disable}>Desactivar</button>}</>}>
+      {!me ? <Loading rows={3} /> : me.totp ? (
+        <>
+          <div className="mfa-state ok"><Icon name="checkCircle" size={22} /><div><b>Está activo</b><p className="muted">Cada vez que entres te vamos a pedir el código de tu app de autenticación{me.phone ? ', o te lo mandamos por WhatsApp' : ''}.</p></div></div>
+          <div className="form-grid" style={{ marginTop: 18 }}>
+            <Field className="full" label="Para desactivarlo, poné tu contraseña"><input type="password" autoComplete="current-password" value={pwd} onChange={(e) => setPwd(e.target.value)} /></Field>
+          </div>
+        </>
+      ) : !setup ? (
+        <>
+          <div className="mfa-state"><Icon name="lock" size={22} /><div><b>Todavía no está activo</b><p className="muted">Si alguien consigue tu contraseña, igual no puede entrar sin tu teléfono.</p></div></div>
+          <ol className="mfa-steps">
+            <li>Instalá una app de autenticación: Google Authenticator, Microsoft Authenticator, Authy o la de tu gestor de contraseñas.</li>
+            <li>Escaneá el código QR que te mostramos.</li>
+            <li>Escribí el código de 6 dígitos para confirmar.</li>
+          </ol>
+          {!me.phone && <p className="muted" style={{ fontSize: 13 }}>Si además cargás tu celular en tu usuario, podés pedir el código por WhatsApp cuando no tengas la app a mano.</p>}
+        </>
+      ) : (
+        <div className="mfa-setup">
+          <div className="qr mfa-qr" dangerouslySetInnerHTML={{ __html: svg }} />
+          <p className="muted" style={{ fontSize: 13, textAlign: 'center' }}>¿No podés escanear? Cargá esta clave a mano:<br /><b className="mono" style={{ fontSize: 14, color: 'var(--text)' }}>{setup.secret}</b></p>
+          <Field className="full" label="Código de 6 dígitos"><input className="otp" inputMode="numeric" autoComplete="one-time-code" maxLength={7} value={code} onChange={(e) => setCode(e.target.value.replace(/[^0-9 ]/g, ''))} placeholder="000 000" autoFocus /></Field>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function SecurityPolicy({ onClose }) {
+  const { data } = useApi('/settings');
+  const [v, setV] = useState(null);
+  useEffect(() => { if (data) setV(data.seguridad || {}); }, [data]);
+  const save = () => act(() => api('/settings/seguridad', { method: 'PUT', body: { ...v, max_attempts: Number(v.max_attempts), lock_minutes: Number(v.lock_minutes) } }), 'Política guardada').then(onClose).catch(() => {});
+  return (
+    <Modal icon="lock" title="Política de seguridad" subtitle="Para el panel y la app" size="sm" onClose={onClose}
+      footer={<><button className="btn sec" data-close onClick={onClose}>Cancelar</button><button className="btn" disabled={!v} onClick={save}>Guardar</button></>}>
+      {!v ? <Loading rows={3} /> : (
+        <div className="form-grid">
+          <Field label="Intentos fallidos" hint="Antes de bloquear"><input type="number" min="3" max="20" value={v.max_attempts ?? 5} onChange={(e) => setV({ ...v, max_attempts: e.target.value })} /></Field>
+          <Field label="Minutos de bloqueo"><input type="number" min="1" max="1440" value={v.lock_minutes ?? 15} onChange={(e) => setV({ ...v, lock_minutes: e.target.value })} /></Field>
+          <div className="field full"><Switch label="Doble factor obligatorio en el panel" checked={!!v.require_2fa_admins} onChange={(x) => setV({ ...v, require_2fa_admins: x })} /></div>
+          <p className="muted full" style={{ fontSize: 13, margin: 0 }}>Con el doble factor obligatorio, quien no lo tenga activo ve un aviso para configurarlo cada vez que entra. Cuando un usuario queda bloqueado, avisamos a los administradores.</p>
+        </div>
+      )}
+    </Modal>
   );
 }
 

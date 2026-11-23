@@ -18,11 +18,11 @@ async function record(channel, to, kind, subject, body, ref) {
 }
 const done = (id, status, error = null) => q('UPDATE notifications SET status=$2, error=$3 WHERE id=$1', [id, status, error]);
 
-export async function sendWhatsApp(phone, text, { kind = 'aviso', ref = null } = {}) {
+export async function sendWhatsApp(phone, text, { kind = 'aviso', ref = null, logText } = {}) {
   const wa = await getSetting('whatsapp');
   const num = phoneToWa(phone);
   if (!num) return { ok: false, error: 'número inválido' };
-  const n = await record('whatsapp', num, kind, null, text, ref);
+  const n = await record('whatsapp', num, kind, null, logText ?? text, ref);
   if (!wa.enabled || !wa.url || !wa.session || !wa.api_key) { await done(n.id, 'omitido', 'WhatsApp no está configurado'); return { ok: false, error: 'WhatsApp no está configurado' }; }
   try {
     const base = wa.url.replace(/\/$/, '');

@@ -7,6 +7,7 @@ import { audit, describe } from './audit.js';
 import { getSetting, getSettingPublic, setSetting } from './settings.js';
 import { siteStatus } from './power.js';
 import { generateDrafts, issue, cancelInvoice } from './invoices.js';
+import { newSecret, verifyTotp, otpauthUri, sealSecret, openSecret, issueWaCode, checkWaCode, lockMessage, registerFailure, clearFailures } from './security.js';
 import { sendWhatsApp, sendEmail, notifyAdmins, recentNotifications } from './notify.js';
 import { randomBytes } from 'node:crypto';
 
@@ -83,17 +84,61 @@ export default async function api(app) {
 
   app.get('/health', async () => ({ ok: true, chargersConnected: clients.size }));
 
+  // ---------- Ingreso al panel: contraseña, doble factor y bloqueo por intentos ----------
+  const finishLogin = async (admin, req, how = '') => {
+    await clearFailures('admins', admin.id);
+    await q('UPDATE admins SET last_login_at=now() WHERE id=$1', [admin.id]);
+    await audit({ actorId: admin.id, actorName: admin.name || admin.email, action: 'ingreso', entity: 'admins', entityId: admin.id, summary: `entró al panel${how}`, ip: req.ip });
+    return { token: app.jwt.sign({ sub: admin.id, email: admin.email, role: 'admin' }, { expiresIn: '12h' }), name: admin.name, email: admin.email, level: admin.role };
+  };
+  const failed = async (admin, req, actorName, summary) => {
+    const f = admin ? await registerFailure('admins', admin.id) : { locked: false };
+    await audit({ actorName, action: 'ingreso_fallido', entity: 'admins', entityId: admin?.id, summary: f.locked ? `${summary}; la cuenta quedó bloqueada` : summary, ip: req.ip });
+    if (f.locked) {
+      notifyAdmins('seguridad', 'Usuario bloqueado por intentos fallidos', `La cuenta ${admin.email} del panel de Eléctricos quedó bloqueada por varios intentos fallidos desde ${req.ip}. Si no fue esa persona, revisá la auditoría.`, `admin:${admin.id}`).catch(() => {});
+      throw new HttpError(423, lockMessage({ locked_until: f.until }));
+    }
+  };
+  const mfaAdmin = async (ticket) => {
+    let t;
+    try { t = app.jwt.verify(String(ticket || '')); } catch { throw new HttpError(401, 'el ingreso venció, volvé a poner tu contraseña'); }
+    if (t.role !== 'mfa') throw new HttpError(401, 'el ingreso venció, volvé a poner tu contraseña');
+    const admin = await one('SELECT * FROM admins WHERE id=$1 AND active', [t.sub]);
+    if (!admin) throw new HttpError(401, 'tu usuario fue deshabilitado');
+    const locked = lockMessage(admin);
+    if (locked) throw new HttpError(423, locked);
+    return admin;
+  };
   app.post('/auth/login', async (req) => {
     const { email, password } = req.body || {};
     const mail = String(email || '').trim().toLowerCase();
     const admin = await one('SELECT * FROM admins WHERE email=$1', [mail]);
+    const locked = lockMessage(admin);
+    if (locked) throw new HttpError(423, locked);
     if (!admin || !admin.active || !(await bcrypt.compare(String(password || ''), admin.password_hash))) {
-      await audit({ actorName: mail || '(vacío)', action: 'ingreso_fallido', entity: 'admins', entityId: admin?.id, summary: admin && !admin.active ? 'intentó entrar con un usuario deshabilitado' : 'intentó entrar con datos incorrectos', ip: req.ip });
+      await failed(admin?.active ? admin : null, req, mail || '(vacío)', admin && !admin.active ? 'intentó entrar con un usuario deshabilitado' : 'intentó entrar con datos incorrectos');
       throw new HttpError(401, 'email o contraseña incorrectos');
     }
-    await q('UPDATE admins SET last_login_at=now() WHERE id=$1', [admin.id]);
-    await audit({ actorId: admin.id, actorName: admin.name || admin.email, action: 'ingreso', entity: 'admins', entityId: admin.id, summary: 'entró al panel', ip: req.ip });
-    return { token: app.jwt.sign({ sub: admin.id, email: admin.email, role: 'admin' }, { expiresIn: '12h' }), name: admin.name, email: admin.email, level: admin.role };
+    if (admin.totp_enabled) {
+      return { need_2fa: true, ticket: app.jwt.sign({ sub: admin.id, role: 'mfa' }, { expiresIn: '5m' }), name: admin.name, can_whatsapp: !!admin.phone };
+    }
+    return finishLogin(admin, req);
+  });
+  app.post('/auth/2fa', async (req) => {
+    const admin = await mfaAdmin(req.body?.ticket);
+    const code = req.body?.code;
+    if (verifyTotp(openSecret(admin.totp_secret), code)) return finishLogin(admin, req, ' con doble factor');
+    if (checkWaCode(admin.id, code)) return finishLogin(admin, req, ' con código por WhatsApp');
+    await failed(admin, req, admin.name || admin.email, 'puso mal el código de doble factor');
+    throw new HttpError(401, 'el código no es correcto');
+  });
+  app.post('/auth/2fa/whatsapp', async (req) => {
+    const admin = await mfaAdmin(req.body?.ticket);
+    if (!admin.phone) throw new HttpError(400, 'tu usuario no tiene un celular cargado');
+    const code = issueWaCode(admin.id);
+    const r = await sendWhatsApp(admin.phone, `🔐 Tu código para entrar a Eléctricos es *${code}*. Vence en 5 minutos. Si no fuiste vos, avisá a un administrador.`, { kind: 'codigo', ref: `admin:${admin.id}`, logText: 'Código de ingreso (oculto)' });
+    if (!r.ok) throw new HttpError(502, `no se pudo mandar el WhatsApp: ${r.error}`);
+    return { ok: true, to: `•••• ${String(admin.phone).replace(/\D/g, '').slice(-3)}` };
   });
 
   // Aviso del respaldo nocturno (lo llama el cron de pve02, solo desde la red interna)
@@ -124,7 +169,7 @@ export default async function api(app) {
       if (!me || !me.active) throw new HttpError(401, 'tu usuario fue deshabilitado');
       req.admin = me;
       const url = req.routeOptions.url || '';
-      if (req.method === 'GET' || url === '/api/me/password') return;
+      if (req.method === 'GET' || url === '/api/me/password' || url.startsWith('/api/me/2fa')) return;
       if (me.role === 'lectura') throw new HttpError(403, 'tu usuario es de solo lectura');
       if (me.role === 'operador' && (req.method === 'DELETE' || /^\/api\/(admins|charger-models|tariffs)/.test(url)))
         throw new HttpError(403, 'esta acción requiere un usuario administrador');
@@ -150,7 +195,33 @@ export default async function api(app) {
         summary: d.action === 'crear' && (label || entityId) ? `${d.summary} ${label || entityId}` : d.summary, data: { body: req.body ?? null }, ip: req.ip });
     });
 
-    priv.get('/me', async (req) => ({ id: req.admin.id, email: req.admin.email, name: req.admin.name, level: req.admin.role }));
+    priv.get('/me', async (req) => {
+      const x = await one('SELECT totp_enabled, phone FROM admins WHERE id=$1', [req.admin.id]);
+      const sec = await getSetting('seguridad').catch(() => ({}));
+      return { id: req.admin.id, email: req.admin.email, name: req.admin.name, level: req.admin.role, totp: x.totp_enabled, phone: x.phone, must_2fa: !!sec.require_2fa_admins && !x.totp_enabled };
+    });
+    // Doble factor del propio usuario
+    priv.post('/me/2fa/setup', async (req) => {
+      const secret = newSecret();
+      await q('UPDATE admins SET totp_pending=$2 WHERE id=$1', [req.admin.id, sealSecret(secret)]);
+      return { secret: secret.match(/.{1,4}/g).join(' '), uri: otpauthUri(secret, req.admin.email) };
+    });
+    priv.post('/me/2fa/enable', async (req) => {
+      const x = await one('SELECT totp_pending FROM admins WHERE id=$1', [req.admin.id]);
+      const secret = openSecret(x.totp_pending);
+      if (!secret) throw new HttpError(400, 'empezá de nuevo la configuración');
+      if (!verifyTotp(secret, req.body?.code)) throw new HttpError(400, 'el código no coincide; revisá que la hora del teléfono esté bien');
+      await q('UPDATE admins SET totp_secret=totp_pending, totp_pending=NULL, totp_enabled=true WHERE id=$1', [req.admin.id]);
+      return { ok: true };
+    });
+    priv.post('/me/2fa/disable', async (req) => {
+      const x = await one('SELECT password_hash FROM admins WHERE id=$1', [req.admin.id]);
+      if (!(await bcrypt.compare(String(req.body?.password || ''), x.password_hash))) throw new HttpError(400, 'la contraseña no es correcta');
+      const sec = await getSetting('seguridad').catch(() => ({}));
+      if (sec.require_2fa_admins) throw new HttpError(409, 'el doble factor es obligatorio para los usuarios del panel');
+      await q('UPDATE admins SET totp_secret=NULL, totp_pending=NULL, totp_enabled=false WHERE id=$1', [req.admin.id]);
+      return { ok: true };
+    });
     priv.post('/me/password', async (req) => {
       const { current, next } = req.body || {};
       const me = await one('SELECT password_hash FROM admins WHERE id=$1', [req.admin.id]);
@@ -162,7 +233,13 @@ export default async function api(app) {
 
     // ---------- Usuarios del panel ----------
     const ROLES = ['admin', 'operador', 'lectura'];
-    priv.get('/admins', async () => many('SELECT id, email, name, phone, role, active, last_login_at, created_at FROM admins ORDER BY active DESC, name'));
+    priv.get('/admins', async () => many('SELECT id, email, name, phone, role, active, last_login_at, created_at, totp_enabled, CASE WHEN locked_until > now() THEN locked_until END AS locked_until FROM admins ORDER BY active DESC, name'));
+    priv.post('/admins/:id/unlock', async (req) => { await clearFailures('admins', Number(req.params.id)); return { ok: true }; });
+    priv.post('/admins/:id/reset-2fa', async (req) => {
+      const r = await one('UPDATE admins SET totp_secret=NULL, totp_pending=NULL, totp_enabled=false WHERE id=$1 RETURNING id', [req.params.id]);
+      if (!r) throw notFound();
+      return { ok: true };
+    });
     priv.post('/admins', async (req, reply) => {
       const { email, name, phone, role = 'operador', password } = req.body || {};
       if (!email || !name) throw new HttpError(400, 'completá nombre y email');
@@ -188,7 +265,7 @@ export default async function api(app) {
     });
     priv.post('/admins/:id/reset-password', async (req) => {
       const pass = randomBytes(6).toString('base64url');
-      const r = await one('UPDATE admins SET password_hash=$2 WHERE id=$1 RETURNING id', [req.params.id, await bcrypt.hash(pass, 10)]);
+      const r = await one('UPDATE admins SET password_hash=$2, failed_attempts=0, locked_until=NULL WHERE id=$1 RETURNING id', [req.params.id, await bcrypt.hash(pass, 10)]);
       if (!r) throw notFound();
       return { temp_password: pass };
     });
@@ -218,7 +295,7 @@ export default async function api(app) {
     });
     priv.post('/app-users/:id/reset-password', async (req) => {
       const pass = randomBytes(5).toString('base64url');
-      const r = await one('UPDATE app_users SET password_hash=$2 WHERE id=$1 RETURNING id', [req.params.id, await bcrypt.hash(pass, 10)]);
+      const r = await one('UPDATE app_users SET password_hash=$2, failed_attempts=0, locked_until=NULL WHERE id=$1 RETURNING id', [req.params.id, await bcrypt.hash(pass, 10)]);
       if (!r) throw notFound();
       return { temp_password: pass };
     });
@@ -266,7 +343,7 @@ export default async function api(app) {
     priv.post('/sites/:id/rebalance', async (req) => { await balanceSite(Number(req.params.id)); return siteStatus(Number(req.params.id)); });
 
     // ---------- Avisos: WhatsApp, correo y destinatarios ----------
-    const SETTINGS = ['whatsapp', 'email', 'avisos', 'facturacion'];
+    const SETTINGS = ['whatsapp', 'email', 'avisos', 'facturacion', 'seguridad'];
     priv.get('/settings', async () => Object.fromEntries(await Promise.all([...SETTINGS, 'backup_status'].map(async (k) => [k, await getSettingPublic(k)]))));
     priv.put('/settings/:name', async (req) => {
       if (!SETTINGS.includes(req.params.name)) throw notFound();
