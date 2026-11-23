@@ -1,0 +1,9 @@
+{
+  "name": "Eléctricos · Infratec",
+  "short_name": "Eléctricos",
+  "start_url": "/app",
+  "display": "standalone",
+  "background_color": "#f5f5f7",
+  "theme_color": "#f5f5f7",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

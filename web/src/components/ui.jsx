@@ -1,78 +1,88 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from './icons.jsx';
 
+/** Hoja modal. Se cierra con la X, Cancelar o Escape; un clic afuera no la cierra para no perder lo escrito. */
 export function Modal({ title, subtitle, children, onClose, footer, size }) {
-  const node = (
-    <div className="modal-bg">
-      <div className={'modal' + (size ? ' modal-' + size : '')}>
-        <div className="modal-head">
-          <div>
-            <h3>{title}</h3>
-            {subtitle && <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>{subtitle}</div>}
-          </div>
-          <button className="btn ghost icon" onClick={onClose}><Icon name="x" size={18} /></button>
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose?.();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return createPortal(
+    <div className="sheet-bg">
+      <div className={'sheet' + (size ? ' ' + size : '')} role="dialog" aria-modal="true" aria-label={title}>
+        <div className="sheet-head">
+          <div><h3>{title}</h3>{subtitle && <div className="sub">{subtitle}</div>}</div>
+          <button className="sheet-close" onClick={onClose} aria-label="Cerrar"><Icon name="x" size={15} /></button>
         </div>
-        {children}
-        {footer && <div className="modal-foot">{footer}</div>}
+        <div className="sheet-body">{children}</div>
+        {footer && <div className="sheet-foot">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
-  return typeof document !== 'undefined' ? createPortal(node, document.body) : node;
 }
 
-export function Field({ label, children }) {
+export function Field({ label, hint, children, className }) {
   return (
-    <div className="field">
+    <div className={'field' + (className ? ' ' + className : '')}>
       {label && <label>{label}</label>}
       {children}
+      {hint && <div className="hint">{hint}</div>}
     </div>
   );
 }
 
-export function PageHeader({ title, desc, actions, icon }) {
+export function Switch({ label, checked, onChange }) {
+  return (
+    <label className="switch-row">
+      <span>{label}</span>
+      <input type="checkbox" checked={!!checked} onChange={(e) => onChange(e.target.checked)} />
+    </label>
+  );
+}
+
+export function Segmented({ value, onChange, options }) {
+  return (
+    <div className="seg" role="tablist">
+      {options.map(([v, l]) => (
+        <button key={v} type="button" role="tab" aria-selected={value === v} className={value === v ? 'active' : ''} onClick={() => onChange(v)}>{l}</button>
+      ))}
+    </div>
+  );
+}
+
+export function PageHeader({ title, desc, actions }) {
   return (
     <div className="page-head">
-      <div className="ph-row">
-        {icon && <span className="ph-ic"><Icon name={icon} size={20} /></span>}
-        <div>
-          <div className="ttl">{title}</div>
-          {desc && <div className="desc">{desc}</div>}
-        </div>
-      </div>
-      {actions && <div className="row wrap" style={{ gap: 8 }}>{actions}</div>}
+      <div><h1 className="ttl">{title}</h1>{desc && <div className="desc">{desc}</div>}</div>
+      {actions && <div className="row wrap">{actions}</div>}
     </div>
   );
 }
 
 export function Stat({ icon, label, value, tone }) {
   return (
-    <div className={'stat ' + (tone || '')}>
-      <div className="row between">
-        <div className="k">{label}</div>
-        {icon && <div className="ic"><Icon name={icon} size={16} /></div>}
-      </div>
+    <div className={'stat' + (tone ? ' ' + tone : '')}>
+      <div className="k">{icon && <Icon name={icon} size={14} />}{label}</div>
       <div className="v">{value}</div>
     </div>
   );
 }
 
-export function Loading({ rows = 4, header = true }) {
+export function Loading({ rows = 4 }) {
   return (
-    <div>
-      {header && <div className="skel" style={{ height: 26, width: '34%', marginBottom: 18, borderRadius: 9 }} />}
-      <div className="list">
-        {Array.from({ length: rows }).map((_, i) => (
-          <div key={i} className="card" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div className="skel" style={{ width: 44, height: 44, borderRadius: 12, flex: 'none' }} />
-            <div style={{ flex: 1 }}>
-              <div className="skel" style={{ height: 13, width: (58 - i * 6) + '%', marginBottom: 8, borderRadius: 6 }} />
-              <div className="skel" style={{ height: 10, width: (42 + i * 5) + '%', borderRadius: 6 }} />
-            </div>
-            <div className="skel" style={{ width: 62, height: 22, borderRadius: 999, flex: 'none' }} />
+    <div className="card flush" aria-busy="true">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderBottom: i < rows - 1 ? '0.5px solid var(--sep)' : 0 }}>
+          <div style={{ flex: 1 }}>
+            <div className="skel" style={{ height: 12, width: `${56 - i * 7}%`, marginBottom: 8 }} />
+            <div className="skel" style={{ height: 10, width: `${34 + i * 6}%` }} />
           </div>
-        ))}
-      </div>
+          <div className="skel" style={{ width: 64, height: 20, borderRadius: 10 }} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -80,15 +90,10 @@ export function Loading({ rows = 4, header = true }) {
 export function Empty({ icon = 'box', title, children, action }) {
   return (
     <div className="empty">
-      <div className="eico"><Icon name={icon} size={26} /></div>
+      <div className="eico"><Icon name={icon} size={24} /></div>
       {title && <div className="et">{title}</div>}
-      <div style={{ marginTop: 4 }}>{children}</div>
-      {action && <div style={{ marginTop: 16 }}>{action}</div>}
+      <div>{children}</div>
+      {action && <div style={{ marginTop: 18 }}>{action}</div>}
     </div>
   );
-}
-
-export function estadoBadge(estado, esFalla) {
-  if (!estado) return <span className="badge gris"><span className="dot" />Sin estado</span>;
-  return <span className={'badge ' + (esFalla ? 'falla' : 'ok')}><span className="dot" />{estado}</span>;
 }

@@ -1,8 +1,8 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Icon } from './icons.jsx';
 
-export default function Drawer({ open, onClose, title, side = 'bottom', children, footer }) {
+/** Hoja inferior para acciones rápidas: se cierra tocando afuera o con Escape. */
+export default function Drawer({ open, onClose, children }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => e.key === 'Escape' && onClose();
@@ -10,17 +10,10 @@ export default function Drawer({ open, onClose, title, side = 'bottom', children
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
   if (!open) return null;
-  const node = (
+  return createPortal(
     <div className="drawer-bg" onClick={onClose}>
-      <div className={'drawer ' + side} onClick={e => e.stopPropagation()}>
-        <div className="drawer-head">
-          <b>{title}</b>
-          <button className="btn ghost icon" aria-label="Cerrar" onClick={onClose}><Icon name="x" size={18} /></button>
-        </div>
-        <div className="drawer-body">{children}</div>
-        {footer && <div className="drawer-foot">{footer}</div>}
-      </div>
-    </div>
+      <div className="drawer" onClick={(e) => e.stopPropagation()}>{children}</div>
+    </div>,
+    document.body,
   );
-  return typeof document !== 'undefined' ? createPortal(node, document.body) : node;
 }
