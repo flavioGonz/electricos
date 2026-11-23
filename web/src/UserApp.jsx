@@ -356,6 +356,20 @@ function AccountTab({ me, config, logout, reload }) {
     try { const r = await uapi('/payments', { method: 'POST', body: { amount } }); window.location.href = r.url; } catch (e) { toast.err(e.message); setBusy(false); }
   };
   const prepaid = me.account.billing_mode === 'prepaid';
+  const [channels, setChannels] = useState({});
+  useEffect(() => { uapi('/notify-channels').then(setChannels).catch(() => {}); }, []);
+  const linkTelegram = async () => {
+    // Se abre la ventana antes del await para que el navegador no la bloquee
+    const w = window.open('', '_blank');
+    try {
+      const r = await uapi('/me/telegram', { method: 'POST' });
+      if (w) w.location.href = r.url; else window.location.href = r.url;
+      toast.ok('Tocá «Iniciar» en Telegram para terminar');
+      const t = setInterval(() => reload(), 3000);
+      setTimeout(() => clearInterval(t), 120000);
+    } catch (e) { w?.close(); toast.err(e.message); }
+  };
+  const unlinkTelegram = () => uapi('/me/telegram', { method: 'DELETE' }).then(() => { toast.ok('Telegram desvinculado'); reload(); }).catch((e) => toast.err(e.message));
   return (
     <div className="u-page">
       <Header title="Cuenta" />
@@ -366,6 +380,12 @@ function AccountTab({ me, config, logout, reload }) {
       <Group title="Avisos" foot="Te avisamos cuando termina tu carga y cuando tu saldo está bajo.">
         <label className="u-row"><span className="u-ico green"><Icon name="whatsapp" size={16} /></span><span className="u-row-main"><span className="u-row-label">WhatsApp</span></span>
           <input type="checkbox" checked={!!me.user.notify_whatsapp} onChange={(e) => pref({ notify_whatsapp: e.target.checked }, e.target.checked ? 'Avisos por WhatsApp activados' : 'Avisos por WhatsApp apagados')} /></label>
+        {channels.telegram && (me.user.telegram ? (
+          <label className="u-row"><span className="u-ico tg"><Icon name="telegram" size={16} /></span><span className="u-row-main"><span className="u-row-label">Telegram</span><button type="button" className="u-link" onClick={unlinkTelegram}>Desvincular</button></span>
+            <input type="checkbox" checked={!!me.user.notify_telegram} onChange={(e) => pref({ notify_telegram: e.target.checked }, e.target.checked ? 'Avisos por Telegram activados' : 'Avisos por Telegram apagados')} /></label>
+        ) : (
+          <button type="button" className="u-row u-row-btn" onClick={linkTelegram}><span className="u-ico tg"><Icon name="telegram" size={16} /></span><span className="u-row-main"><span className="u-row-label">Conectar Telegram</span><span className="u-row-sub">Recibí los avisos en Telegram</span></span><Icon name="chevronRight" size={16} /></button>
+        ))}
         <label className="u-row"><span className="u-ico blue"><Icon name="mail" size={16} /></span><span className="u-row-main"><span className="u-row-label">Correo</span></span>
           <input type="checkbox" checked={!!me.user.notify_email} onChange={(e) => pref({ notify_email: e.target.checked }, e.target.checked ? 'Avisos por correo activados' : 'Avisos por correo apagados')} /></label>
         <label className="u-row"><span className="u-ico gray"><Icon name="phone" size={16} /></span>

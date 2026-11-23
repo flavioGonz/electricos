@@ -17,7 +17,7 @@ const roleLabel = (r) => ROLES.find((x) => x.value === r)?.label || r;
 const ROLE_TONE = { admin: 'info', operador: 'ok', lectura: 'gris', edificio: 'warn' };
 
 /** Muestra una contraseña temporal una sola vez, con botón para copiarla. */
-function TempPassword({ who, password, onClose }) {
+export function TempPassword({ who, password, onClose }) {
   const copy = () => navigator.clipboard?.writeText(password).then(() => act(async () => {}, 'Contraseña copiada'));
   return (
     <Modal icon="lock" tone="green" size="sm" title="Contraseña temporal" subtitle={`Para ${who}. Se muestra una sola vez.`} onClose={onClose}
@@ -154,65 +154,6 @@ function SecurityPolicy({ onClose }) {
 }
 
 // ---------- Usuarios de la app ----------
-export function AppUsers() {
-  const { data, reload } = useApi('/app-users');
-  const accounts = useApi('/accounts').data || [];
-  const [filter, setFilter] = useState('');
-  const [state, setState] = useState('todos');
-  const [create, setCreate] = useState(null);
-  const [temp, setTemp] = useState(null);
-  const rows = useMemo(() => (data || []).filter((u) =>
-    (state === 'todos' || (state === 'activos' ? u.active : !u.active)) &&
-    (!filter || `${u.name} ${u.email} ${u.account_name} ${u.account_unit || ''}`.toLowerCase().includes(filter.toLowerCase()))), [data, filter, state]);
-  const toggle = (u) => act(() => api(`/app-users/${u.id}`, { method: 'PATCH', body: { active: !u.active } }), u.active ? 'Usuario deshabilitado' : 'Usuario habilitado').then(reload).catch(() => {});
-  const reset = (u) => act(() => api(`/app-users/${u.id}/reset-password`, { method: 'POST' })).then((r) => setTemp({ who: u.name, password: r.temp_password })).catch(() => {});
-  const save = () => act(() => api('/app-users', { method: 'POST', body: { ...create, account_id: Number(create.account_id) } }), 'Usuario creado')
-    .then((r) => { setCreate(null); reload(); if (r.temp_password) setTemp({ who: r.name, password: r.temp_password }); }).catch(() => {});
-  return (
-    <div className="page">
-      <PageHeader title="Usuarios de la app" desc="Las personas que entran a la app para cargar con el celular. Cada una carga a la cuenta de su unidad o a su saldo prepago."
-        actions={<button className="btn" onClick={() => setCreate({ account_id: accounts[0]?.id || '', name: '', email: '', phone: '', password: '' })}><Icon name="plus" size={16} />Nuevo</button>} />
-      <div className="toolbar">
-        <span className="search"><Icon name="search" size={16} /><input placeholder="Buscar por nombre, email o cuenta" value={filter} onChange={(e) => setFilter(e.target.value)} /></span>
-        <Segmented value={state} onChange={setState} options={[['todos', 'Todos'], ['activos', 'Activos'], ['inactivos', 'Deshabilitados']]} />
-      </div>
-      {!data ? <Loading rows={4} /> : rows.length === 0 ? (
-        <div className="card"><Empty icon="users" title={data.length ? 'Nadie coincide con la búsqueda' : 'Todavía nadie se registró'}>Los residentes se registran desde la app con el código de invitación de su cuenta, o los podés crear acá.</Empty></div>
-      ) : (
-        <div className="card flush"><div className="tablewrap"><table className="table">
-          <thead><tr><th>Usuario</th><th>Cuenta</th><th className="right">Energía total</th><th>Última carga</th><th>Estado</th><th /></tr></thead>
-          <tbody>{rows.map((u) => (
-            <tr key={u.id}>
-              <td><b>{u.name}</b><div className="subtle">{u.email}{u.phone ? ` · ${u.phone}` : ''}</div></td>
-              <td>{u.account_unit ? `${u.account_unit} · ` : ''}{u.account_name}<div className="subtle">{u.billing_mode === 'prepaid' ? 'Prepago' : 'Pospago'}</div></td>
-              <td className="right kwh">{kwh(u.energy_wh)}</td>
-              <td>{u.last_charge ? <span data-tip={dt(u.last_charge)}>{ago(u.last_charge)}</span> : <span className="subtle">Nunca</span>}</td>
-              <td>{u.active ? <span className="badge mini ok"><span className="dot" />Activo</span> : <span className="badge mini gris"><span className="dot" />Deshabilitado</span>}</td>
-              <td className="actions">
-                <button className="btn ghost icon sm" aria-label="Restablecer contraseña" data-tip="Generar una contraseña nueva" onClick={() => reset(u)}><Icon name="repeat" size={15} /></button>
-                <button className="btn ghost icon sm" aria-label={u.active ? 'Deshabilitar' : 'Habilitar'} data-tip={u.active ? 'Deshabilitar: no podrá cargar' : 'Habilitar'} onClick={() => toggle(u)}><Icon name={u.active ? 'power' : 'check'} size={15} /></button>
-              </td>
-            </tr>
-          ))}</tbody>
-        </table></div></div>
-      )}
-      {create && (
-        <Modal icon="users" title="Nuevo usuario de la app" subtitle="Va a poder cargar con el celular a cuenta de la unidad elegida." onClose={() => setCreate(null)}
-          footer={<><button className="btn sec" data-close onClick={() => setCreate(null)}>Cancelar</button><button className="btn" onClick={save}><Icon name="plus" size={16} />Crear</button></>}>
-          <div className="form-grid">
-            <Field className="full" label="Cuenta"><select value={create.account_id} onChange={(e) => setCreate({ ...create, account_id: e.target.value })}>{accounts.map((a) => <option key={a.id} value={a.id}>{a.unit ? `${a.unit} · ` : ''}{a.name}</option>)}</select></Field>
-            <Field className="full" label="Nombre"><input value={create.name} onChange={(e) => setCreate({ ...create, name: e.target.value })} placeholder="Nombre y apellido" /></Field>
-            <Field label="Email"><input type="email" value={create.email} onChange={(e) => setCreate({ ...create, email: e.target.value })} /></Field>
-            <Field label="Celular (opcional)"><input value={create.phone} onChange={(e) => setCreate({ ...create, phone: e.target.value })} /></Field>
-            <Field className="full" label="Contraseña (opcional)" hint="Vacía para generar una temporal."><input type="password" value={create.password} onChange={(e) => setCreate({ ...create, password: e.target.value })} /></Field>
-          </div>
-        </Modal>
-      )}
-      {temp && <TempPassword {...temp} onClose={() => setTemp(null)} />}
-    </div>
-  );
-}
-
 // ---------- Cargadores compatibles (drivers) ----------
 const yes = (v, label) => <span className={'feat' + (v ? ' on' : '')} data-tip={`${label}: ${v ? 'sí' : 'no'}`}>{label}</span>;
 export function ChargerModels() {
@@ -320,103 +261,3 @@ export function Audit() {
 }
 
 // ---------- Avisos (WhatsApp y correo) ----------
-const listToText = (a) => (a || []).join(', ');
-const textToList = (t) => String(t || '').split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
-export function Notifications({ me }) {
-  const { data, reload } = useApi('/settings');
-  const log = useApi('/notifications');
-  const [wa, setWa] = useState(null);
-  const [em, setEm] = useState(null);
-  const [av, setAv] = useState(null);
-  const [status, setStatus] = useState(null);
-  const [test, setTest] = useState(null);
-  const admin = me?.level === 'admin';
-  useEffect(() => {
-    if (!data) return;
-    setWa(data.whatsapp); setEm(data.email);
-    setAv({ ...data.avisos, admin_whatsapp: listToText(data.avisos.admin_whatsapp), admin_email: listToText(data.avisos.admin_email) });
-  }, [data]);
-  useEffect(() => { api('/settings/whatsapp/status').then(setStatus).catch(() => {}); }, [data]);
-  const save = (name, body) => act(() => api(`/settings/${name}`, { method: 'PUT', body }), 'Configuración guardada').then(reload).catch(() => {});
-  const sendTest = () => act(() => api('/settings/test', { method: 'POST', body: test }), 'Mensaje de prueba enviado').then(() => { setTest(null); log.reload(); }).catch(() => log.reload());
-  if (!wa || !em || !av) return <div className="page"><PageHeader title="Avisos" /><Loading rows={4} /></div>;
-  const b = data.backup_status;
-  const waOk = /connected|ready|working|open|authenticated/i.test(status?.status || '');
-  return (
-    <div className="page">
-      <PageHeader title="Avisos" desc="Mensajes automáticos por WhatsApp y correo: fin de carga, saldo bajo, alertas de los cargadores y el resultado del respaldo nocturno."
-        actions={<button className="btn sec" onClick={() => setTest({ channel: 'whatsapp', to: '' })}><Icon name="mail" size={16} />Enviar prueba</button>} />
-      <div className="set-grid">
-        <section className="card set-card">
-          <header><span className="sc-ico green"><Icon name="whatsapp" size={16} /></span><div><h3>WhatsApp</h3><p className="muted">Por el gateway OpenWA de Infratec.</p></div>
-            <span className={`badge mini ${!wa.enabled ? 'gris' : waOk ? 'ok' : 'warn'}`} data-tip={status?.error || status?.phone || ''}><span className="dot" />{!wa.enabled ? 'Apagado' : status?.status || '…'}</span></header>
-          <div className="form-grid">
-            <div className="field full"><Switch label="Enviar avisos por WhatsApp" checked={wa.enabled} onChange={(v) => setWa({ ...wa, enabled: v })} /></div>
-            <Field className="full" label="Dirección de OpenWA"><input value={wa.url} onChange={(e) => setWa({ ...wa, url: e.target.value })} placeholder="http://192.168.99.22:2785" /></Field>
-            <Field label="Sesión"><input className="mono" value={wa.session} onChange={(e) => setWa({ ...wa, session: e.target.value })} /></Field>
-            <Field label="Clave de API"><input type="password" value={wa.api_key} onChange={(e) => setWa({ ...wa, api_key: e.target.value })} /></Field>
-          </div>
-          {admin && <footer><button className="btn" onClick={() => save('whatsapp', wa)}><Icon name="check" size={16} />Guardar</button></footer>}
-        </section>
-
-        <section className="card set-card">
-          <header><span className="sc-ico blue"><Icon name="mail" size={16} /></span><div><h3>Correo</h3><p className="muted">Servidor SMTP para enviar los emails.</p></div>
-            <span className={`badge mini ${em.enabled && em.pass ? 'ok' : 'gris'}`}><span className="dot" />{em.enabled ? (em.pass ? 'Activo' : 'Falta la clave') : 'Apagado'}</span></header>
-          <div className="form-grid">
-            <div className="field full"><Switch label="Enviar avisos por correo" checked={em.enabled} onChange={(v) => setEm({ ...em, enabled: v })} /></div>
-            <Field label="Servidor"><input value={em.host} onChange={(e) => setEm({ ...em, host: e.target.value })} /></Field>
-            <Field label="Puerto"><input type="number" value={em.port} onChange={(e) => setEm({ ...em, port: Number(e.target.value) })} /></Field>
-            <Field label="Usuario"><input value={em.user} onChange={(e) => setEm({ ...em, user: e.target.value })} placeholder="no-replay@infratec.com.uy" /></Field>
-            <Field label="Contraseña" hint="En Google Workspace, una contraseña de aplicación."><input type="password" value={em.pass} onChange={(e) => setEm({ ...em, pass: e.target.value })} /></Field>
-            <Field className="full" label="Remitente"><input value={em.from} onChange={(e) => setEm({ ...em, from: e.target.value })} /></Field>
-          </div>
-          {admin && <footer><button className="btn" onClick={() => save('email', em)}><Icon name="check" size={16} />Guardar</button></footer>}
-        </section>
-
-        <section className="card set-card wide">
-          <header><span className="sc-ico rose"><Icon name="bell" size={16} /></span><div><h3>Qué se avisa y a quién</h3><p className="muted">Los usuarios reciben sus avisos en el celular y el email que cargaron; pueden apagarlos desde la app.</p></div></header>
-          <div className="form-grid">
-            <div className="field"><Switch label="Fin de carga, con kWh y costo" checked={av.fin_carga} onChange={(v) => setAv({ ...av, fin_carga: v })} /></div>
-            <div className="field"><Switch label="Saldo bajo (cuentas prepagas)" checked={av.saldo_bajo} onChange={(v) => setAv({ ...av, saldo_bajo: v })} /></div>
-            <div className="field"><Switch label="Alertas de cargadores al equipo técnico" checked={av.alertas} onChange={(v) => setAv({ ...av, alertas: v })} /></div>
-            <div className="field"><Switch label="Respaldo nocturno fallido" checked={av.respaldo} onChange={(v) => setAv({ ...av, respaldo: v })} /></div>
-            <Field label="Avisar saldo bajo por debajo de ($)"><input type="number" value={av.saldo_bajo_umbral} onChange={(e) => setAv({ ...av, saldo_bajo_umbral: Number(e.target.value) })} /></Field>
-            <div />
-            <Field className="full" label="Equipo técnico: WhatsApp" hint="Celulares separados por coma. Ejemplo: 099 123 456, 098 765 432"><input value={av.admin_whatsapp} onChange={(e) => setAv({ ...av, admin_whatsapp: e.target.value })} /></Field>
-            <Field className="full" label="Equipo técnico: correo"><input value={av.admin_email} onChange={(e) => setAv({ ...av, admin_email: e.target.value })} placeholder="soporte@infratec.com.uy" /></Field>
-          </div>
-          {admin && <footer><button className="btn" onClick={() => save('avisos', { ...av, admin_whatsapp: textToList(av.admin_whatsapp), admin_email: textToList(av.admin_email) })}><Icon name="check" size={16} />Guardar</button></footer>}
-        </section>
-      </div>
-
-      <div className="row between" style={{ margin: '26px 0 10px' }}>
-        <h2 className="sec-title">Últimos avisos</h2>
-        <span className="muted" style={{ fontSize: 13 }}>{b?.at ? <>Último respaldo {ago(b.at)} · {b.ok ? 'correcto' : 'con error'}</> : 'Sin respaldos registrados todavía'}</span>
-      </div>
-      {!log.data ? <Loading rows={3} /> : log.data.length === 0 ? <div className="card"><Empty icon="bell" title="Todavía no se envió ningún aviso" /></div> : (
-        <div className="card flush"><div className="tablewrap"><table className="table">
-          <thead><tr><th>Cuándo</th><th>Canal</th><th>Para</th><th>Aviso</th><th>Estado</th></tr></thead>
-          <tbody>{log.data.map((n) => (
-            <tr key={n.id}>
-              <td style={{ whiteSpace: 'nowrap' }}><span data-tip={dt(n.at)}>{ago(n.at)}</span></td>
-              <td><Icon name={n.channel === 'email' ? 'mail' : 'whatsapp'} size={15} /></td>
-              <td className="mono">{n.to_addr}</td>
-              <td><span data-tip={n.body}>{n.subject || n.body.split('\n')[0].slice(0, 70)}</span></td>
-              <td><span className={`badge mini ${n.status === 'enviado' ? 'ok' : n.status === 'error' ? 'falla' : 'gris'}`} data-tip={n.error || ''}><span className="dot" />{n.status}</span></td>
-            </tr>
-          ))}</tbody>
-        </table></div></div>
-      )}
-
-      {test && (
-        <Modal icon="mail" tone="green" size="sm" title="Enviar un mensaje de prueba" onClose={() => setTest(null)}
-          footer={<><button className="btn sec" data-close onClick={() => setTest(null)}>Cancelar</button><button className="btn" onClick={sendTest}><Icon name="arrowRight" size={16} />Enviar</button></>}>
-          <div className="form-grid">
-            <div className="field full"><Segmented value={test.channel} onChange={(v) => setTest({ ...test, channel: v })} options={[['whatsapp', 'WhatsApp'], ['email', 'Correo']]} /></div>
-            <Field className="full" label={test.channel === 'email' ? 'Email' : 'Celular'}><input value={test.to} onChange={(e) => setTest({ ...test, to: e.target.value })} placeholder={test.channel === 'email' ? 'nombre@empresa.com' : '099 123 456'} /></Field>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}

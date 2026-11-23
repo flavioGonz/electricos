@@ -2,7 +2,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { one, q } from './db.js';
 
-const SECRET_KEYS = ['api_key', 'pass', 'secret', 'provider_token'];
+const SECRET_KEYS = ['api_key', 'pass', 'secret', 'provider_token', 'bot_token'];
 const key = () => createHash('sha256').update(`electricos:${process.env.JWT_SECRET || 'dev'}`).digest();
 
 export function encrypt(text) {

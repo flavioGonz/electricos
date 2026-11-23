@@ -9,7 +9,8 @@ import { siteStatus } from './power.js';
 import { generateDrafts, issue, cancelInvoice } from './invoices.js';
 import { consumo } from './consumo.js';
 import { newSecret, verifyTotp, otpauthUri, sealSecret, openSecret, issueWaCode, checkWaCode, lockMessage, registerFailure, clearFailures } from './security.js';
-import { sendWhatsApp, sendEmail, notifyAdmins, recentNotifications } from './notify.js';
+import { sendWhatsApp, sendEmail, sendTelegram, notifyAdmins, recentNotifications, notificationStats } from './notify.js';
+import { tgStatus, tgLinkCode } from './telegram.js';
 import { randomBytes } from 'node:crypto';
 
 const TZ = process.env.TZ_LOCAL || 'America/Montevideo';
@@ -189,7 +190,7 @@ export default async function api(app) {
         if (req.method !== 'GET' || !EDIFICIO_GET.has(url.replace(/^\/api/, ''))) throw new HttpError(403, 'tu usuario solo puede ver el consumo y la liquidación de tu edificio');
         return;
       }
-      if (req.method === 'GET' || url === '/api/me/password' || url.startsWith('/api/me/2fa')) return;
+      if (req.method === 'GET' || url === '/api/me/password' || url.startsWith('/api/me/2fa') || url === '/api/me/telegram') return;
       if (me.role === 'lectura') throw new HttpError(403, 'tu usuario es de solo lectura');
       if (me.role === 'operador' && (req.method === 'DELETE' || /^\/api\/(admins|charger-models|tariffs)/.test(url)))
         throw new HttpError(403, 'esta acción requiere un usuario administrador');
@@ -216,11 +217,11 @@ export default async function api(app) {
     });
 
     priv.get('/me', async (req) => {
-      const x = await one('SELECT totp_enabled, phone FROM admins WHERE id=$1', [req.admin.id]);
+      const x = await one('SELECT totp_enabled, phone, telegram_chat_id FROM admins WHERE id=$1', [req.admin.id]);
       const sec = await getSetting('seguridad').catch(() => ({}));
       const sc = scopeOf(req);
       const sites = sc ? await many('SELECT id, name FROM sites WHERE id = ANY($1::int[]) ORDER BY name', [sc]) : undefined;
-      return { id: req.admin.id, email: req.admin.email, name: req.admin.name, level: req.admin.role, sites, totp: x.totp_enabled, phone: x.phone, must_2fa: !!sec.require_2fa_admins && !x.totp_enabled };
+      return { id: req.admin.id, email: req.admin.email, name: req.admin.name, level: req.admin.role, sites, telegram: !!x.telegram_chat_id, totp: x.totp_enabled, phone: x.phone, must_2fa: !!sec.require_2fa_admins && !x.totp_enabled };
     });
     // Doble factor del propio usuario
     priv.post('/me/2fa/setup', async (req) => {
@@ -307,11 +308,51 @@ export default async function api(app) {
     });
 
     // ---------- Usuarios de la app (todas las cuentas) ----------
-    priv.get('/app-users', async () =>
-      many(`SELECT u.id, u.name, u.email, u.phone, u.active, u.created_at, u.account_id, a.name AS account_name, a.unit AS account_unit, a.billing_mode,
-                   (SELECT max(started_at) FROM sessions x JOIN cards k ON k.id_tag=x.id_tag WHERE k.app_user_id=u.id) AS last_charge,
-                   (SELECT COALESCE(sum(energy_wh),0) FROM sessions x JOIN cards k ON k.id_tag=x.id_tag WHERE k.app_user_id=u.id AND x.status='completed') AS energy_wh
-              FROM app_users u JOIN accounts a ON a.id=u.account_id ORDER BY u.active DESC, u.name`));
+    const APP_USER_COLS = `u.id, u.name, u.email, u.phone, u.active, u.created_at, u.last_login_at, u.account_id, a.name AS account_name, a.unit AS account_unit, a.billing_mode,
+                   s.name AS site_name, u.notify_whatsapp, u.notify_email, u.notify_telegram, u.telegram_chat_id IS NOT NULL AS telegram,
+                   CASE WHEN u.locked_until > now() THEN u.locked_until END AS locked_until,
+                   st.sessions, st.energy_wh, st.amount, st.last_charge, st.active_now`;
+    const APP_USER_FROM = `FROM app_users u JOIN accounts a ON a.id=u.account_id LEFT JOIN sites s ON s.id=a.site_id
+           LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE x.status='completed')::int AS sessions, COALESCE(sum(x.energy_wh) FILTER (WHERE x.status='completed'),0) AS energy_wh,
+                                     COALESCE(sum(x.amount) FILTER (WHERE x.status='completed'),0) AS amount, max(x.started_at) AS last_charge, bool_or(x.status='active') AS active_now
+                                FROM sessions x JOIN cards k ON k.id_tag=x.id_tag WHERE k.app_user_id=u.id) st ON true`;
+    priv.get('/app-users', async () => many(`SELECT ${APP_USER_COLS} ${APP_USER_FROM} ORDER BY u.active DESC, u.name`));
+    priv.get('/app-users/:id', async (req) => {
+      const u = await one(`SELECT ${APP_USER_COLS} ${APP_USER_FROM} WHERE u.id=$1`, [req.params.id]);
+      if (!u) throw notFound();
+      const months = await many(
+        `SELECT to_char(date_trunc('month', x.started_at AT TIME ZONE $2), 'YYYY-MM') AS month, count(*)::int AS sessions, COALESCE(sum(x.energy_wh),0) AS energy_wh, COALESCE(sum(x.amount),0) AS amount
+           FROM sessions x JOIN cards k ON k.id_tag=x.id_tag WHERE k.app_user_id=$1 AND x.status='completed' AND x.started_at > now() - interval '12 months'
+          GROUP BY 1 ORDER BY 1`, [u.id, TZ]);
+      return { ...u, months };
+    });
+    priv.get('/app-users/:id/sessions', async (req) => {
+      const { month } = req.query;
+      const [from, to] = month ? monthRange(month) : [null, null];
+      return many(
+        `SELECT x.id, x.charger_id, c.name AS charger_name, s.name AS site_name, x.started_at, x.stopped_at, x.status, x.energy_wh, x.amount, x.stop_reason, x.breakdown,
+                CASE WHEN x.status='active' THEN x.last_meter_wh - x.meter_start_wh END AS live_wh
+           FROM sessions x JOIN cards k ON k.id_tag=x.id_tag JOIN chargers c ON c.id=x.charger_id LEFT JOIN sites s ON s.id=c.site_id
+          WHERE k.app_user_id=$1 AND ($2::date IS NULL OR x.started_at >= ($2::date::timestamp AT TIME ZONE $4)) AND ($3::date IS NULL OR x.started_at < ($3::date::timestamp AT TIME ZONE $4))
+          ORDER BY x.started_at DESC LIMIT 500`, [req.params.id, from, to, TZ]);
+    });
+    priv.get('/app-users/:id/activity', async (req) => many(
+      `SELECT id, at, actor_type, actor_name, action, summary, ip FROM audit_log
+        WHERE (actor_type='app' AND actor_id=$1) OR (entity='app-users' AND entity_id=$1::text) ORDER BY at DESC LIMIT 200`, [Number(req.params.id)]));
+    priv.post('/app-users/:id/password', async (req) => {
+      const pass = String(req.body?.password || '');
+      if (pass.length < 6) throw new HttpError(400, 'la contraseña tiene que tener al menos 6 caracteres');
+      const r = await one('UPDATE app_users SET password_hash=$2, failed_attempts=0, locked_until=NULL WHERE id=$1 RETURNING id', [req.params.id, await bcrypt.hash(pass, 10)]);
+      if (!r) throw notFound();
+      if (req.body?.logout) await q('UPDATE app_users SET tokens_valid_after=now() WHERE id=$1', [req.params.id]);
+      return { ok: true };
+    });
+    priv.post('/app-users/:id/unlock', async (req) => { await clearFailures('app_users', Number(req.params.id)); return { ok: true }; });
+    priv.post('/app-users/:id/logout', async (req) => {
+      const r = await one('UPDATE app_users SET tokens_valid_after=now() WHERE id=$1 RETURNING id', [req.params.id]);
+      if (!r) throw notFound();
+      return { ok: true };
+    });
     priv.post('/app-users', async (req, reply) => {
       const { account_id, name, email, phone, password } = req.body || {};
       if (!account_id || !name || !email) throw new HttpError(400, 'completá cuenta, nombre y email');
@@ -376,7 +417,7 @@ export default async function api(app) {
     priv.post('/sites/:id/rebalance', async (req) => { await balanceSite(Number(req.params.id)); return siteStatus(Number(req.params.id)); });
 
     // ---------- Avisos: WhatsApp, correo y destinatarios ----------
-    const SETTINGS = ['whatsapp', 'email', 'avisos', 'facturacion', 'seguridad'];
+    const SETTINGS = ['whatsapp', 'email', 'telegram', 'avisos', 'facturacion', 'seguridad'];
     priv.get('/settings', async () => Object.fromEntries(await Promise.all([...SETTINGS, 'backup_status'].map(async (k) => [k, await getSettingPublic(k)]))));
     priv.put('/settings/:name', async (req) => {
       if (!SETTINGS.includes(req.params.name)) throw notFound();
@@ -386,7 +427,9 @@ export default async function api(app) {
     priv.post('/settings/test', async (req) => {
       const { channel, to } = req.body || {};
       const text = 'Mensaje de prueba de Eléctricos. Si te llegó, los avisos están funcionando.';
-      const r = channel === 'email' ? await sendEmail(to, 'Prueba de avisos', text, { kind: 'prueba' }) : await sendWhatsApp(to, `⚡ ${text}`, { kind: 'prueba' });
+      const r = channel === 'email' ? await sendEmail(to, 'Prueba de avisos', text, { kind: 'prueba' })
+        : channel === 'telegram' ? await sendTelegram(to, text, { kind: 'prueba', subject: '⚡ Eléctricos' })
+        : await sendWhatsApp(to, `⚡ ${text}`, { kind: 'prueba' });
       if (!r.ok) throw new HttpError(502, r.error);
       return r;
     });
@@ -402,6 +445,11 @@ export default async function api(app) {
       }
     });
     priv.get('/notifications', async () => recentNotifications(200));
+    priv.get('/notifications/stats', async () => notificationStats());
+    priv.get('/settings/telegram/status', async () => tgStatus());
+    priv.get('/telegram/admins', async () => many(`SELECT id, name, email, role, telegram_chat_id IS NOT NULL AS linked FROM admins WHERE active AND role IN ('admin','operador') ORDER BY name`));
+    priv.post('/me/telegram', async (req) => tgLinkCode('admin', req.admin.id));
+    priv.delete('/me/telegram', async (req) => { await q('UPDATE admins SET telegram_chat_id=NULL WHERE id=$1', [req.admin.id]); return { ok: true }; });
 
     // ---------- Auditoría ----------
     priv.get('/audit', async (req, reply) => {
@@ -594,7 +642,18 @@ export default async function api(app) {
       return row;
     });
     priv.get('/accounts/:id/app-users', async (req) => many('SELECT id, name, email, phone, active, created_at FROM app_users WHERE account_id=$1 ORDER BY name', [req.params.id]));
-    priv.patch('/app-users/:id', async (req) => update('app_users', 'id', req.params.id, pick(req.body, ['active', 'name', 'phone'])));
+    priv.patch('/app-users/:id', async (req) => {
+      const d = pick(req.body, ['active', 'name', 'phone', 'email', 'account_id', 'notify_whatsapp', 'notify_email', 'notify_telegram']);
+      if (d.email) d.email = String(d.email).trim().toLowerCase();
+      if (d.account_id != null) {
+        d.account_id = Number(d.account_id);
+        if (!(await one('SELECT 1 FROM accounts WHERE id=$1', [d.account_id]))) throw new HttpError(400, 'la cuenta no existe');
+        await q('UPDATE cards SET account_id=$2 WHERE app_user_id=$1', [req.params.id, d.account_id]);
+      }
+      if (d.active === false) d.tokens_valid_after = new Date();
+      const r = await update('app_users', 'id', req.params.id, d);
+      return { id: r.id, name: r.name, email: r.email, phone: r.phone, active: r.active, account_id: r.account_id };
+    });
 
     priv.get('/reservations', async () =>
       many(`SELECT r.*, c.name AS charger_name, a.name AS account_name, a.unit AS account_unit FROM reservations r

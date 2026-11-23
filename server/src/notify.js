@@ -1,5 +1,6 @@
-// Avisos por WhatsApp (OpenWA) y correo (SMTP): fin de carga, saldo bajo, alertas y respaldos.
+// Avisos por WhatsApp (OpenWA), Telegram (bot propio) y correo (SMTP): fin de carga, saldo bajo, alertas y respaldos.
 import nodemailer from 'nodemailer';
+import { tgSend, tgEscape } from './telegram.js';
 import { many, one, q } from './db.js';
 import { getSetting } from './settings.js';
 
@@ -68,12 +69,37 @@ export async function sendEmail(to, subject, text, { kind = 'aviso', ref = null 
   }
 }
 
-/** Avisa a los administradores (listas de WhatsApp y correo de Configuración → Avisos). */
+export async function sendTelegram(chatId, text, { kind = 'aviso', ref = null, subject = null } = {}) {
+  if (!chatId) return { ok: false, error: 'sin chat de Telegram' };
+  const n = await record('telegram', String(chatId), kind, subject, text, ref);
+  const tg = await getSetting('telegram');
+  if (!tg.enabled || !tg.bot_token) { await done(n.id, 'omitido', 'Telegram no está configurado'); return { ok: false, error: 'Telegram no está configurado' }; }
+  try {
+    await tgSend(chatId, (subject ? `<b>${tgEscape(subject)}</b>\n` : '') + tgEscape(text));
+    await done(n.id, 'enviado');
+    return { ok: true };
+  } catch (e) {
+    await done(n.id, 'error', e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+// Qué eventos salen por qué canal: avisos.canales[evento][canal] (true si no está definido)
+const EVENT = { alerta: 'alertas', alertas: 'alertas', respaldo: 'respaldo', seguridad: 'seguridad', fin_carga: 'fin_carga', saldo_bajo: 'saldo_bajo' };
+export function wants(cfg, kind, channel) {
+  const ev = EVENT[kind] || kind;
+  return cfg[ev] !== false && cfg.canales?.[ev]?.[channel] !== false;
+}
+
+/** Avisa a los administradores (listas de WhatsApp, Telegram y correo de Configuración → Avisos). */
 export async function notifyAdmins(kind, subject, text, ref) {
   const cfg = await getSetting('avisos');
-  if (cfg[kind === 'alerta' ? 'alertas' : kind] === false) return;
-  for (const p of cfg.admin_whatsapp || []) await sendWhatsApp(p, `⚡ ${subject}\n${text}`, { kind, ref });
-  for (const m of cfg.admin_email || []) await sendEmail(m, `Eléctricos · ${subject}`, text, { kind, ref });
+  if (wants(cfg, kind, 'whatsapp')) for (const p of cfg.admin_whatsapp || []) await sendWhatsApp(p, `⚡ ${subject}\n${text}`, { kind, ref });
+  if (wants(cfg, kind, 'telegram')) {
+    const linked = (await many(`SELECT telegram_chat_id FROM admins WHERE active AND role IN ('admin','operador') AND telegram_chat_id IS NOT NULL`)).map((r) => r.telegram_chat_id);
+    for (const c of new Set([...(cfg.admin_telegram || []), ...linked])) await sendTelegram(c, text, { kind, ref, subject: `⚡ ${subject}` });
+  }
+  if (wants(cfg, kind, 'email')) for (const m of cfg.admin_email || []) await sendEmail(m, `Eléctricos · ${subject}`, text, { kind, ref });
 }
 
 const money = (n, cur = 'UYU') => new Intl.NumberFormat('es-UY', { style: 'currency', currency: cur }).format(Number(n || 0));
@@ -89,25 +115,37 @@ export async function onSessionClosed(s) {
   const bal = Number((await one('SELECT COALESCE(SUM(amount),0) AS b FROM movements WHERE account_id=$1', [s.account_id])).b);
   const mins = Math.round((new Date(s.stopped_at) - new Date(s.started_at)) / 60000);
   const recipients = user
-    ? { phone: user.notify_whatsapp ? user.phone : null, email: user.notify_email ? user.email : null, name: user.name }
-    : { phone: acc.phone, email: acc.email, name: acc.name };
+    ? { phone: user.notify_whatsapp ? user.phone : null, email: user.notify_email ? user.email : null, telegram: user.notify_telegram ? user.telegram_chat_id : null, name: user.name }
+    : { phone: acc.phone, email: acc.email, telegram: null, name: acc.name };
   if (cfg.fin_carga !== false) {
+    const ref = `session:${s.id}`;
     const text = `Hola ${String(recipients.name || '').split(' ')[0]}, terminó tu carga en ${ch?.name || s.charger_id}.\n` +
       `${kwh(s.energy_wh)} en ${mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`} · ${money(s.amount)}.\n` +
       (acc.billing_mode === 'prepaid' ? `Saldo disponible: ${money(bal)}.` : 'Se suma a la liquidación mensual de tu unidad.');
-    if (recipients.phone) await sendWhatsApp(recipients.phone, `⚡ ${text}`, { kind: 'fin_carga', ref: `session:${s.id}` });
-    if (recipients.email) await sendEmail(recipients.email, 'Terminó tu carga', text, { kind: 'fin_carga', ref: `session:${s.id}` });
+    if (recipients.phone && wants(cfg, 'fin_carga', 'whatsapp')) await sendWhatsApp(recipients.phone, `⚡ ${text}`, { kind: 'fin_carga', ref });
+    if (recipients.telegram && wants(cfg, 'fin_carga', 'telegram')) await sendTelegram(recipients.telegram, text, { kind: 'fin_carga', ref, subject: '⚡ Terminó tu carga' });
+    if (recipients.email && wants(cfg, 'fin_carga', 'email')) await sendEmail(recipients.email, 'Terminó tu carga', text, { kind: 'fin_carga', ref });
   }
   const umbral = Number(cfg.saldo_bajo_umbral ?? 200);
   const recent = acc.low_balance_notified_at && Date.now() - new Date(acc.low_balance_notified_at) < 24 * 3600e3;
   if (cfg.saldo_bajo !== false && acc.billing_mode === 'prepaid' && bal < umbral && !recent) {
     const text = `Tu saldo para cargar es de ${money(bal)}. Recargá desde la app para seguir cargando: ${(process.env.PUBLIC_URL || '').replace(/\/$/, '')}/app/cuenta`;
-    if (recipients.phone) await sendWhatsApp(recipients.phone, `🔋 ${text}`, { kind: 'saldo_bajo', ref: `account:${acc.id}` });
-    if (recipients.email) await sendEmail(recipients.email, 'Tu saldo está bajo', text, { kind: 'saldo_bajo', ref: `account:${acc.id}` });
+    const ref = `account:${acc.id}`;
+    if (recipients.phone && wants(cfg, 'saldo_bajo', 'whatsapp')) await sendWhatsApp(recipients.phone, `🔋 ${text}`, { kind: 'saldo_bajo', ref });
+    if (recipients.telegram && wants(cfg, 'saldo_bajo', 'telegram')) await sendTelegram(recipients.telegram, text, { kind: 'saldo_bajo', ref, subject: '🔋 Tu saldo está bajo' });
+    if (recipients.email && wants(cfg, 'saldo_bajo', 'email')) await sendEmail(recipients.email, 'Tu saldo está bajo', text, { kind: 'saldo_bajo', ref });
     await q('UPDATE accounts SET low_balance_notified_at=now() WHERE id=$1', [acc.id]);
   }
 }
 
 export async function recentNotifications(limit = 100) {
   return many('SELECT * FROM notifications ORDER BY at DESC LIMIT $1', [limit]);
+}
+
+/** Resumen de los últimos 30 días por canal y estado, para el tablero de Avisos. */
+export async function notificationStats() {
+  const rows = await many(`SELECT channel, status, count(*)::int AS n FROM notifications WHERE at > now() - interval '30 days' GROUP BY channel, status`);
+  const daily = await many(`SELECT to_char(date_trunc('day', at AT TIME ZONE $1), 'YYYY-MM-DD') AS day, count(*) FILTER (WHERE status='enviado')::int AS sent, count(*) FILTER (WHERE status='error')::int AS failed
+                              FROM notifications WHERE at > now() - interval '14 days' GROUP BY 1 ORDER BY 1`, [process.env.TZ_LOCAL || 'America/Montevideo']);
+  return { rows, daily };
 }

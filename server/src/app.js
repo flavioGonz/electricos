@@ -1,4 +1,6 @@
 // API de la app del usuario: registro, QR del cargador, iniciar/detener, consumo, reservas y pagos.
+import { tgLinkCode } from './telegram.js';
+import { getSetting } from './settings.js';
 import { lockMessage, registerFailure, clearFailures } from './security.js';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
@@ -127,6 +129,7 @@ export default async function appApi(app) {
       throw new HttpError(401, 'Email o contraseña incorrectos');
     }
     await clearFailures('app_users', u.id);
+    await q('UPDATE app_users SET last_login_at=now() WHERE id=$1', [u.id]);
     return { token: app.jwt.sign({ sub: u.id, acc: u.account_id, role: 'user' }, { expiresIn: '90d' }), user: { id: u.id, name: u.name, email: u.email } };
   });
 
@@ -169,15 +172,16 @@ export default async function appApi(app) {
         throw new HttpError(401, 'Iniciá sesión de nuevo');
       }
       if (req.user.role !== 'user') throw new HttpError(403, 'Esta sección es para usuarios de la app');
-      const u = await one('SELECT id, account_id, active FROM app_users WHERE id=$1', [req.user.sub]);
+      const u = await one('SELECT id, account_id, active, tokens_valid_after FROM app_users WHERE id=$1', [req.user.sub]);
       if (!u || !u.active) throw new HttpError(401, 'Usuario deshabilitado');
+      if (u.tokens_valid_after && req.user.iat * 1000 < new Date(u.tokens_valid_after).getTime() - 1000) throw new HttpError(401, 'Iniciá sesión de nuevo');
       req.appUser = u;
     });
 
     priv.get('/me', async (req) => {
       const u = req.appUser;
       const account = await one('SELECT id, name, unit, billing_mode, credit_limit, site_id FROM accounts WHERE id=$1', [u.account_id]);
-      const user = await one('SELECT id, name, email, phone, notify_whatsapp, notify_email FROM app_users WHERE id=$1', [u.id]);
+      const user = await one('SELECT id, name, email, phone, notify_whatsapp, notify_email, notify_telegram, telegram_chat_id IS NOT NULL AS telegram FROM app_users WHERE id=$1', [u.id]);
       const active = await many(
         `SELECT x.id, x.charger_id, c.name AS charger_name, x.connector_id, x.started_at, x.last_meter_wh - x.meter_start_wh AS energy_wh, x.power_w
            FROM sessions x JOIN chargers c ON c.id=x.charger_id WHERE x.account_id=$1 AND x.status='active' ORDER BY x.started_at`,
@@ -204,13 +208,17 @@ export default async function appApi(app) {
 
     priv.patch('/me', async (req) => {
       const d = {};
-      for (const k of ['notify_whatsapp', 'notify_email']) if (typeof req.body?.[k] === 'boolean') d[k] = req.body[k];
+      for (const k of ['notify_whatsapp', 'notify_email', 'notify_telegram']) if (typeof req.body?.[k] === 'boolean') d[k] = req.body[k];
       if (typeof req.body?.phone === 'string') d.phone = req.body.phone.trim() || null;
       const keys = Object.keys(d);
       if (!keys.length) return { ok: true };
       await q(`UPDATE app_users SET ${keys.map((k, i) => `${k}=$${i + 2}`).join(',')} WHERE id=$1`, [req.appUser.id, ...Object.values(d)]);
       return { ok: true };
     });
+
+    priv.post('/me/telegram', async (req) => tgLinkCode('app_user', req.appUser.id));
+    priv.delete('/me/telegram', async (req) => { await q('UPDATE app_users SET telegram_chat_id=NULL WHERE id=$1', [req.appUser.id]); return { ok: true }; });
+    priv.get('/notify-channels', async () => ({ telegram: !!(await getSetting('telegram')).enabled, whatsapp: !!(await getSetting('whatsapp')).enabled }));
 
     priv.get('/chargers', async (req) => {
       const acc = await one('SELECT site_id FROM accounts WHERE id=$1', [req.appUser.account_id]);

@@ -134,3 +134,26 @@ test('consumo por hora a partir de las lecturas', { skip }, async () => {
   assert.equal(c.byHour[19].normal, 2000); // 22:30Z = 19:30 en Montevideo
   assert.equal(c.byHour[20].normal, 3000);
 });
+
+test('gestión de usuarios de la app: contraseña, cierre de sesiones y ficha', { skip }, async () => {
+  const acc = (await call('GET', '/accounts', { token: adminToken })).body[0];
+  const u = await call('POST', '/app-users', { token: adminToken, body: { account_id: acc.id, name: 'Vecina Prueba', email: 'vecina@prueba.uy', password: 'inicial1' } });
+  assert.equal(u.status, 201);
+  const appLogin = async (password) => call('POST', '/app/login', { body: { email: 'vecina@prueba.uy', password } });
+  const first = await appLogin('inicial1');
+  assert.ok(first.body.token);
+  assert.equal((await call('POST', `/app-users/${u.body.id}/password`, { token: adminToken, body: { password: '123' } })).status, 400);
+  await new Promise((r) => setTimeout(r, 1100));
+  assert.equal((await call('POST', `/app-users/${u.body.id}/password`, { token: adminToken, body: { password: 'cambiada1', logout: true } })).status, 200);
+  assert.equal((await call('GET', '/app/me', { token: first.body.token })).status, 401, 'la sesión vieja queda cerrada');
+  assert.equal((await appLogin('inicial1')).status, 401);
+  const again = await appLogin('cambiada1');
+  assert.equal((await call('GET', '/app/me', { token: again.body.token })).status, 200);
+  const d = await call('GET', `/app-users/${u.body.id}`, { token: adminToken });
+  assert.equal(d.body.name, 'Vecina Prueba');
+  assert.ok(d.body.last_login_at);
+  assert.ok(Array.isArray(d.body.months));
+  assert.ok(Array.isArray((await call('GET', `/app-users/${u.body.id}/sessions`, { token: adminToken })).body));
+  const act = await call('GET', `/app-users/${u.body.id}/activity`, { token: adminToken });
+  assert.ok(act.body.length >= 1);
+});
