@@ -655,3 +655,27 @@ textarea.mono { font: 12.5px/1.5 var(--mono); }
 .pbar.hot span { background: linear-gradient(90deg, #ff9500, #ff3b30); }
 .plist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13.5px; }
 .plist li { display: flex; align-items: center; gap: 8px; }
+
+/* ───────── Facturación ───────── */
+.inv-note { align-items: flex-start; font-weight: 400; line-height: 1.45; }
+.inv-note b { font-weight: 600; }
+.inv-note svg { flex: none; margin-top: 2px; }
+.table tr.dim td { opacity: 0.45; }
+.inv-doc { border: 0.5px solid var(--sep); border-radius: 16px; padding: 22px; background: var(--surface, #fff); }
+.inv-head { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 0.5px solid var(--sep); font-size: 13px; }
+.inv-em { display: block; font: 600 17px var(--font-display); letter-spacing: -0.02em; margin-bottom: 2px; }
+.inv-type { text-align: right; }
+.inv-kind { font: 700 15px var(--font-display); color: var(--accent); }
+.inv-kv { margin-bottom: 18px; grid-template-columns: 100px 1fr; }
+.inv-lines { margin: 0 -4px; }
+.inv-lines td, .inv-lines th { padding-left: 4px; padding-right: 4px; }
+.inv-tot { margin: 16px 0 0 auto; max-width: 280px; display: grid; gap: 6px; font-size: 14px; }
+.inv-tot > div { display: flex; justify-content: space-between; }
+.inv-tot span { color: var(--text-2); }
+.inv-tot .big { padding-top: 8px; margin-top: 4px; border-top: 0.5px solid var(--sep); font-size: 17px; }
+.inv-tot .big span { color: var(--text); font-weight: 600; }
+@media print {
+  body.printing-inv .inv-print, body.printing-inv .inv-print * { visibility: visible !important; }
+  body.printing-inv .inv-print { position: fixed; inset: 0; border: 0; padding: 32px; background: #fff; }
+}
+.inv-lines td.num { white-space: nowrap; }

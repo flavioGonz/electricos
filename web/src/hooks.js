@@ -40,7 +40,7 @@ function onLive(fn) {
 export async function act(fn, okMsg) {
   try {
     const r = await fn();
-    if (okMsg) toast.ok(okMsg);
+    if (okMsg) toast.ok(typeof okMsg === 'function' ? okMsg(r) : okMsg);
     return r;
   } catch (e) {
     toast.err(e.message);

@@ -6,6 +6,7 @@ import appApi, { newInviteCode, appTag } from './app.js';
 import { audit, describe } from './audit.js';
 import { getSetting, getSettingPublic, setSetting } from './settings.js';
 import { siteStatus } from './power.js';
+import { generateDrafts, issue, cancelInvoice } from './invoices.js';
 import { sendWhatsApp, sendEmail, notifyAdmins, recentNotifications } from './notify.js';
 import { randomBytes } from 'node:crypto';
 
@@ -236,6 +237,27 @@ export default async function api(app) {
     priv.get('/charger-models/match', async (req) => matchModel(req.query.vendor, req.query.model));
     priv.post('/chargers/:id/apply-driver', async (req) => applyDriver(req.params.id));
 
+    // ---------- Facturación electrónica ----------
+    priv.get('/invoices', async (req) => many(
+      `SELECT i.*, a.name AS account, a.unit, s.name AS site FROM invoices i JOIN accounts a ON a.id=i.account_id LEFT JOIN sites s ON s.id=a.site_id
+        WHERE ($1::text IS NULL OR i.period=$1) AND ($2::int IS NULL OR a.site_id=$2) ORDER BY i.status='anulada', a.site_id, a.unit, a.name`,
+      [req.query.month || null, req.query.siteId ? Number(req.query.siteId) : null]));
+    priv.post('/invoices/generate', async (req) => {
+      const r = await generateDrafts(req.body?.month, req.body?.siteId ? Number(req.body.siteId) : null);
+      return { created: r.length };
+    });
+    priv.get('/invoices/:id', async (req) => {
+      const r = await one(`SELECT i.*, a.name AS account, a.unit, s.name AS site FROM invoices i JOIN accounts a ON a.id=i.account_id LEFT JOIN sites s ON s.id=a.site_id WHERE i.id=$1`, [Number(req.params.id)]);
+      if (!r) throw notFound();
+      return { ...r, emisor: await getSettingPublic('facturacion') };
+    });
+    priv.post('/invoices/:id/issue', async (req) => {
+      const m = req.body?.manual ? { series: req.body.series, number: req.body.number } : null;
+      if (m && !m.number) throw new HttpError(400, 'indicá el número del comprobante');
+      return issue(Number(req.params.id), m);
+    });
+    priv.post('/invoices/:id/cancel', async (req) => cancelInvoice(Number(req.params.id)));
+
     // ---------- Potencia por sitio ----------
     priv.get('/power', async () => {
       const sites = await many('SELECT id FROM sites WHERE contracted_kw IS NOT NULL OR max_amps IS NOT NULL ORDER BY name');
@@ -244,7 +266,7 @@ export default async function api(app) {
     priv.post('/sites/:id/rebalance', async (req) => { await balanceSite(Number(req.params.id)); return siteStatus(Number(req.params.id)); });
 
     // ---------- Avisos: WhatsApp, correo y destinatarios ----------
-    const SETTINGS = ['whatsapp', 'email', 'avisos'];
+    const SETTINGS = ['whatsapp', 'email', 'avisos', 'facturacion'];
     priv.get('/settings', async () => Object.fromEntries(await Promise.all([...SETTINGS, 'backup_status'].map(async (k) => [k, await getSettingPublic(k)]))));
     priv.put('/settings/:name', async (req) => {
       if (!SETTINGS.includes(req.params.name)) throw notFound();
@@ -344,7 +366,7 @@ export default async function api(app) {
     crud(priv, {
       path: '/accounts',
       table: 'accounts',
-      fields: ['site_id', 'name', 'unit', 'email', 'phone', 'billing_mode', 'credit_limit', 'tariff_id', 'active'],
+      fields: ['site_id', 'name', 'unit', 'email', 'phone', 'billing_mode', 'credit_limit', 'tariff_id', 'active', 'doc_type', 'doc_number', 'legal_name', 'billing_address', 'billing_email'],
       list: `SELECT a.*, s.name AS site_name,
                (SELECT COALESCE(SUM(amount),0) FROM movements m WHERE m.account_id=a.id) AS balance,
                (SELECT count(*) FROM cards k WHERE k.account_id=a.id) AS cards

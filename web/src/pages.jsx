@@ -323,6 +323,12 @@ export function Accounts() {
           { name: 'credit_limit', label: 'Saldo negativo permitido', type: 'number', half: true, show: (v) => v.billing_mode === 'prepaid' },
           { name: 'tariff_id', label: 'Tarifa especial', type: 'select', numeric: true, half: true, options: () => tariffs.map((t) => ({ value: t.id, label: t.name })), help: 'Si no elegís, usa la del sitio.' },
           { name: 'active', type: 'checkbox', help: 'Cuenta habilitada para cargar' },
+          { name: 'hf', type: 'heading', label: 'Facturación' },
+          { name: 'doc_type', label: 'Documento', type: 'select', half: true, options: [{ value: 'CI', label: 'Cédula (e-Ticket)' }, { value: 'RUT', label: 'RUT (e-Factura)' }, { value: 'otro', label: 'Otro documento' }] },
+          { name: 'doc_number', label: 'Número', half: true, placeholder: '1.234.567-8' },
+          { name: 'legal_name', label: 'Razón social o nombre', placeholder: 'Si es distinto al de la cuenta' },
+          { name: 'billing_address', label: 'Domicilio fiscal', half: true },
+          { name: 'billing_email', label: 'Correo para el comprobante', type: 'email', half: true },
         ]}
         columns={[
           { label: 'Cuenta', render: (r) => <><b>{who(r.unit, r.name)}</b><div className="subtle" style={{ fontSize: 12 }}>{r.site_name || 'Sin sitio'}</div></> },

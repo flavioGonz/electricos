@@ -11,6 +11,7 @@ import UserApp from './UserApp.jsx';
 import LoginScene from './components/LoginScene.jsx';
 import { AdminUsers, AppUsers, ChargerModels, Audit, Notifications } from './settings.jsx';
 import { Tooltip } from 'react-tooltip';
+import { Invoices } from './billing.jsx';
 import { Dashboard, Chargers, Tariffs, Sites, Accounts, Cards, Sessions, Report, OwnersReport, Alerts, Reservations, Payments } from './pages.jsx';
 
 const NAV = [
@@ -23,6 +24,7 @@ const NAV = [
   { to: '/tarjetas', label: 'Tarjetas', icon: 'card', section: 'Usuarios', page: Cards },
   { to: '/liquidacion', label: 'Liquidación por cuenta', icon: 'file', section: 'Cobro', page: Report },
   { to: '/propietarios', label: 'Liquidación a propietarios', icon: 'building', section: 'Cobro', page: OwnersReport },
+  { to: '/facturacion', label: 'Facturación', icon: 'ticket', section: 'Cobro', page: Invoices },
   { to: '/pagos', label: 'Pagos online', icon: 'dollar', section: 'Cobro', page: Payments },
   { to: '/tarifas', label: 'Tarifas', icon: 'clock', section: 'Cobro', page: Tariffs },
   { to: '/sitios', label: 'Sitios', icon: 'pin', section: 'Configuración', page: Sites },
