@@ -1,24 +1,38 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from './icons.jsx';
 
-/** Hoja modal. Se cierra con la X, Cancelar o Escape; un clic afuera no la cierra para no perder lo escrito. */
-export function Modal({ title, subtitle, children, onClose, footer, size }) {
+/**
+ * Panel lateral (reemplaza a las ventanas modales). Entra desde la derecha en escritorio y desde abajo en el teléfono.
+ * Se cierra con la X, Cancelar o Escape. Un clic afuera no lo cierra, para no perder lo escrito.
+ */
+export function Modal({ title, subtitle, icon = 'edit', tone = 'accent', children, onClose, footer, size }) {
+  const [closing, setClosing] = useState(false);
+  const close = useCallback(() => {
+    if (closing) return;
+    setClosing(true);
+    setTimeout(() => onClose?.(), 260);
+  }, [closing, onClose]);
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose?.();
+    const onKey = (e) => e.key === 'Escape' && close();
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    document.body.classList.add('panel-open');
+    return () => { window.removeEventListener('keydown', onKey); document.body.classList.remove('panel-open'); };
+  }, [close]);
+  // Los botones del pie que cierran (Cancelar) también animan la salida
+  const foot = footer && React.Children.map(footer.props?.children ?? footer, (el) =>
+    React.isValidElement(el) && (el.props['data-close'] || el.props.onClick === onClose) ? React.cloneElement(el, { onClick: close }) : el);
   return createPortal(
-    <div className="sheet-bg">
-      <div className={'sheet' + (size ? ' ' + size : '')} role="dialog" aria-modal="true" aria-label={title}>
-        <div className="sheet-head">
-          <div><h3>{title}</h3>{subtitle && <div className="sub">{subtitle}</div>}</div>
-          <button className="sheet-close" onClick={onClose} aria-label="Cerrar"><Icon name="x" size={15} /></button>
-        </div>
-        <div className="sheet-body">{children}</div>
-        {footer && <div className="sheet-foot">{footer}</div>}
-      </div>
+    <div className={'panel-bg' + (closing ? ' out' : '')}>
+      <aside className={'panel' + (size ? ' ' + size : '') + (closing ? ' out' : '')} role="dialog" aria-modal="true" aria-label={title}>
+        <header className="panel-head">
+          <span className={'panel-ico ' + tone}><Icon name={icon} size={18} /></span>
+          <div className="panel-ttl"><h3>{title}</h3>{subtitle && <div className="sub">{subtitle}</div>}</div>
+          <button className="panel-close" onClick={close} aria-label="Cerrar" data-tip="Cerrar (Esc)"><Icon name="x" size={16} /></button>
+        </header>
+        <div className="panel-body">{children}</div>
+        {foot && <footer className="panel-foot">{foot}</footer>}
+      </aside>
     </div>,
     document.body,
   );

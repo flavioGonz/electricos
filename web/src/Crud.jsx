@@ -21,6 +21,7 @@ export default function CrudPage({ title, singular, desc, icon, path, keyField =
   const [del, setDel] = useState(null);
   const [busy, setBusy] = useState(false);
   const name = singular || title.toLowerCase();
+  const fem = /a$/.test(name);
 
   const visible = (f, values) => !(edit?.row && f.createOnly) && (!f.show || f.show(values));
   const open = (row) => setEdit({ row, values: row ? { ...row } : { ...defaults } });
@@ -41,7 +42,7 @@ export default function CrudPage({ title, singular, desc, icon, path, keyField =
     if (missing) return act(async () => { throw new Error(`Falta completar: ${missing.label}`); }).catch(() => {});
     setBusy(true);
     try {
-      const row = await act(() => (edit.row ? api(`${path}/${encodeURIComponent(edit.row[keyField])}`, { method: 'PATCH', body }) : api(path, { method: 'POST', body })), edit.row ? 'Cambios guardados' : `${name[0].toUpperCase()}${name.slice(1)} creado`);
+      const row = await act(() => (edit.row ? api(`${path}/${encodeURIComponent(edit.row[keyField])}`, { method: 'PATCH', body }) : api(path, { method: 'POST', body })), edit.row ? 'Cambios guardados' : `${name[0].toUpperCase()}${name.slice(1)} ${fem ? 'creada' : 'creado'}`);
       setEdit(null);
       reload();
       onSaved?.(row);
@@ -82,8 +83,8 @@ export default function CrudPage({ title, singular, desc, icon, path, keyField =
       )}
 
       {edit && (
-        <Modal title={edit.row ? `Editar ${name}` : `Nuevo ${name}`} onClose={() => setEdit(null)}
-          footer={<><button className="btn sec" onClick={() => setEdit(null)}>Cancelar</button><button className="btn" disabled={busy} onClick={save}>{edit.row ? 'Guardar' : 'Crear'}</button></>}>
+        <Modal icon={edit.row ? 'edit' : (icon || 'plus')} subtitle={edit.row ? 'Los cambios se aplican al guardar.' : desc} title={edit.row ? `Editar ${name}` : `${fem ? 'Nueva' : 'Nuevo'} ${name}`} onClose={() => setEdit(null)}
+          footer={<><button className="btn sec" data-close onClick={() => setEdit(null)}>Cancelar</button><button className="btn" disabled={busy} onClick={save}><Icon name={edit.row ? 'check' : 'plus'} size={16} />{edit.row ? 'Guardar' : 'Crear'}</button></>}>
           <div className="form-grid">
             {fields.map((f) => {
               if (!visible(f, edit.values)) return null;
@@ -116,8 +117,8 @@ export default function CrudPage({ title, singular, desc, icon, path, keyField =
       )}
 
       {del && (
-        <Modal title={`¿Eliminar ${name}?`} size="sm" onClose={() => setDel(null)}
-          footer={<><button className="btn sec" onClick={() => setDel(null)}>Cancelar</button><button className="btn danger" onClick={remove}>Eliminar</button></>}>
+        <Modal icon="trash" tone="red" subtitle="Esta acción no se puede deshacer." title={`¿Eliminar ${name}?`} size="sm" onClose={() => setDel(null)}
+          footer={<><button className="btn sec" data-close onClick={() => setDel(null)}>Cancelar</button><button className="btn danger" onClick={remove}><Icon name="trash" size={16} />Eliminar</button></>}>
           <p className="muted" style={{ margin: '0 0 6px' }}>No se puede deshacer.</p>
         </Modal>
       )}

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Icon } from './icons.jsx';
 import Drawer from './Drawer.jsx';
+import { Tooltip } from 'react-tooltip';
 
 const KEY = 'electricos_sidebar';
 
@@ -24,7 +25,7 @@ export default function AppShell({ nav = [], user, active, onNavigate, onLogout,
     g.items.push(it);
   }
   const item = (it, onClick) => (
-    <a key={it.to} href={it.to} data-label={it.label} className={'nav-item' + (active === it.to ? ' active' : '')} onClick={onClick || ((e) => go(e, it.to))} aria-current={active === it.to ? 'page' : undefined}>
+    <a key={it.to} href={it.to} data-tip={collapsed ? it.label : undefined} data-tooltip-place="right" className={'nav-item' + (active === it.to ? ' active' : '')} onClick={onClick || ((e) => go(e, it.to))} aria-current={active === it.to ? 'page' : undefined}>
       <Icon name={it.icon} size={17} />
       <span className="nav-label">{it.label}</span>
       {it.badge ? <span className="nav-badge">{it.badge}</span> : null}
@@ -49,18 +50,20 @@ export default function AppShell({ nav = [], user, active, onNavigate, onLogout,
           ))}
         </nav>
         <div className="side-foot">
-          <a href="#" className="nav-item collapse-btn" data-label={collapsed ? 'Expandir' : 'Contraer'} onClick={(e) => { e.preventDefault(); setCollapsed((c) => !c); }}>
+          <a href="#" className="nav-item collapse-btn" data-tip={collapsed ? 'Expandir barra (Ctrl+\\)' : 'Ctrl+\\'} data-tooltip-place="right" onClick={(e) => { e.preventDefault(); setCollapsed((c) => !c); }}>
             <Icon name="chevronLeft" size={17} /><span className="nav-label">Contraer barra</span>
           </a>
           {user && (
             <div className="side-user">
-              <span className="av">{(user.name || '?').slice(0, 1).toUpperCase()}</span>
+              <span className="av" data-tip={collapsed ? `${user.name} · ${user.email}` : undefined} data-tooltip-place="right">{(user.name || '?').slice(0, 1).toUpperCase()}</span>
               <span className="who grow"><b>{user.name}</b><span>{user.email}</span></span>
-              {!collapsed && onLogout && <button className="btn ghost icon sm" aria-label="Cerrar sesión" data-tip="Cerrar sesión" onClick={onLogout}><Icon name="external" size={15} /></button>}
+              {!collapsed && onLogout && <button className="btn ghost icon sm" aria-label="Cerrar sesión" data-tip="Cerrar sesión" onClick={onLogout}><Icon name="power" size={15} /></button>}
             </div>
           )}
         </div>
       </aside>
+
+      <Tooltip key={collapsed ? 'c' : 'e'} className="tip" anchorSelect=".side [data-tip]" place="right" delayShow={200} offset={10} render={({ activeAnchor }) => activeAnchor?.getAttribute('data-tip')} />
 
       <header className="topbar">
         <span className="row"><span className="side-brand" style={{ margin: 0, padding: 0, height: 'auto' }}><span className="mark" style={{ width: 26, height: 26, borderRadius: 7 }}><Icon name="bolt" size={15} /></span></span><b>{title}</b></span>

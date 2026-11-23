@@ -226,7 +226,7 @@ function ReserveSheet({ chargers, onClose, onDone }) {
     } catch (e) { toast.err(e.message); } finally { setBusy(false); }
   };
   return (
-    <Modal title="Reservar" onClose={onClose} footer={<><button className="btn sec" onClick={onClose}>Cancelar</button><button className="btn" disabled={busy || !chargerId} onClick={save}>Reservar</button></>}>
+    <Modal icon="calendar" tone="orange" title="Reservar" onClose={onClose} footer={<><button className="btn sec" onClick={onClose}>Cancelar</button><button className="btn" disabled={busy || !chargerId} onClick={save}>Reservar</button></>}>
       <div className="form-grid">
         {chargers.length > 1 && (
           <Field className="full" label="Cargador">

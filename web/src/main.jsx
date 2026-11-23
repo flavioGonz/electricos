@@ -8,6 +8,8 @@ import { Field } from './components/ui.jsx';
 import { api, getToken, setToken } from './api.js';
 import { useApi } from './hooks.js';
 import UserApp from './UserApp.jsx';
+import LoginScene from './components/LoginScene.jsx';
+import { Tooltip } from 'react-tooltip';
 import { Dashboard, Chargers, Tariffs, Sites, Accounts, Cards, Sessions, Report, OwnersReport, Alerts, Reservations, Payments } from './pages.jsx';
 
 const NAV = [
@@ -28,6 +30,7 @@ const NAV = [
 function Login({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [show, setShow] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const submit = async (e) => {
@@ -45,17 +48,33 @@ function Login({ onLogin }) {
     }
   };
   return (
-    <div className="login-wrap">
-      <form className="login-card" onSubmit={submit}>
-        <span className="mark"><Icon name="bolt" size={26} /></span>
-        <h2>Eléctricos</h2>
-        <p className="muted" style={{ margin: '4px 0 22px' }}>Administración de la carga de vehículos eléctricos</p>
-        {err && <div className="err-box">{err}</div>}
-        <Field label="Email"><input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus /></Field>
-        <Field label="Contraseña"><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
-        <button className="btn lg block" type="submit" disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</button>
-        <img className="login-logo" src="/infratec-logo.svg" alt="Infratec" />
-      </form>
+    <div className="auth">
+      <section className="auth-form">
+        <div className="auth-brand"><span className="mark"><Icon name="bolt" size={18} /></span><b>Eléctricos</b><img src="/infratec-logo.svg" alt="Infratec" /></div>
+        <form className="auth-box" onSubmit={submit}>
+          <h1>Bienvenido</h1>
+          <p className="muted">Entrá para administrar los cargadores, las cuentas y la facturación de la energía.</p>
+          {err && <div className="err-box" role="alert"><Icon name="alert" size={15} />{err}</div>}
+          <label className="in">
+            <span>Email</span>
+            <span className="in-box"><Icon name="mail" size={17} /><input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nombre@empresa.com" autoFocus required /></span>
+          </label>
+          <label className="in">
+            <span>Contraseña</span>
+            <span className="in-box">
+              <Icon name="lock" size={17} />
+              <input type={show ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
+              <button type="button" className="in-eye" onClick={() => setShow((v) => !v)} aria-label={show ? 'Ocultar contraseña' : 'Mostrar contraseña'} data-tip={show ? 'Ocultar contraseña' : 'Mostrar contraseña'}><Icon name={show ? 'eyeOff' : 'eye'} size={17} /></button>
+            </span>
+          </label>
+          <button className={'btn lg block auth-go' + (busy ? ' busy' : '')} type="submit" disabled={busy}>
+            {busy ? <span className="spin" /> : null}{busy ? 'Entrando' : 'Entrar'}{!busy && <Icon name="arrowRight" size={18} />}
+          </button>
+          <a className="auth-alt" href="/app"><Icon name="users" size={15} />¿Sos usuario? Entrá a la app de carga</a>
+        </form>
+        <footer className="auth-foot">Infratec · Montevideo</footer>
+      </section>
+      <section className="auth-art"><LoginScene /></section>
     </div>
   );
 }
@@ -96,4 +115,4 @@ function App() {
 
 const p = window.location.pathname;
 const isUserApp = p === '/app' || p.startsWith('/app/') || p.startsWith('/c/');
-createRoot(document.getElementById('root')).render(<>{isUserApp ? <UserApp /> : <App />}<ToastHost /></>);
+createRoot(document.getElementById('root')).render(<>{isUserApp ? <UserApp /> : <App />}<ToastHost /><Tooltip className="tip" anchorSelect="[data-tip]:not(.side [data-tip])" delayShow={350} offset={8} render={({ activeAnchor }) => activeAnchor?.getAttribute('data-tip')} /></>);

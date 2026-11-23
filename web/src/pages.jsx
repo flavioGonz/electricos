@@ -76,7 +76,7 @@ function QrSheet({ charger, onClose }) {
   const [svg, setSvg] = useState('');
   useEffect(() => { QRCode.toString(url, { type: 'svg', margin: 0, errorCorrectionLevel: 'M', color: { dark: '#1d1d1f', light: '#ffffff' } }).then(setSvg); }, [url]);
   return (
-    <Modal title="Cartel con QR" subtitle="Imprimilo y pegalo junto al cargador." size="sm" onClose={onClose}
+    <Modal icon="qr" title="Cartel con QR" subtitle="Imprimilo y pegalo junto al cargador." size="sm" onClose={onClose}
       footer={<><a className="btn sec" href={url} target="_blank" rel="noreferrer">Abrir enlace</a><button className="btn" onClick={() => window.print()}><Icon name="printer" size={16} />Imprimir</button></>}>
       <div className="qr-print">
         <div className="qr-sign">
@@ -148,8 +148,8 @@ export function Chargers() {
       )}
 
       {edit && (
-        <Modal title={edit.name || edit.id} subtitle={edit.approved && !data.find((c) => c.id === edit.id)?.approved ? 'Completá los datos para aprobarlo.' : `Identificador ${edit.id}`} onClose={() => setEdit(null)}
-          footer={<><button className="btn sec" onClick={() => setEdit(null)}>Cancelar</button><button className="btn" onClick={save}>Guardar</button></>}>
+        <Modal icon="settings" title={edit.name || edit.id} subtitle={edit.approved && !data.find((c) => c.id === edit.id)?.approved ? 'Completá los datos para aprobarlo.' : `Identificador ${edit.id}`} onClose={() => setEdit(null)}
+          footer={<><button className="btn sec" data-close onClick={() => setEdit(null)}>Cancelar</button><button className="btn" onClick={save}>Guardar</button></>}>
           <div className="form-grid">
             <Field className="full" label="Nombre"><input value={edit.name || ''} placeholder="Cochera 12" onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
             <Field label="Sitio"><select value={edit.site_id || ''} onChange={(e) => setEdit({ ...edit, site_id: e.target.value })}><option value="">—</option>{sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
@@ -160,15 +160,15 @@ export function Chargers() {
         </Modal>
       )}
       {remote && (
-        <Modal title={`Iniciar carga en ${remote.c.name || remote.c.id}`} size="sm" onClose={() => setRemote(null)}
-          footer={<><button className="btn sec" onClick={() => setRemote(null)}>Cancelar</button><button className="btn" onClick={() => cmd(remote.c, 'remote-start', { idTag: remote.idTag, connectorId: remote.connectorId }, 'Se pidió iniciar la carga').then(() => setRemote(null))}>Iniciar</button></>}>
+        <Modal icon="bolt" tone="green" title={`Iniciar carga en ${remote.c.name || remote.c.id}`} size="sm" onClose={() => setRemote(null)}
+          footer={<><button className="btn sec" data-close onClick={() => setRemote(null)}>Cancelar</button><button className="btn" onClick={() => cmd(remote.c, 'remote-start', { idTag: remote.idTag, connectorId: remote.connectorId }, 'Se pidió iniciar la carga').then(() => setRemote(null))}>Iniciar</button></>}>
           <Field label="Tarjeta (UID)" hint="La carga se cobra a la cuenta de esta tarjeta."><input value={remote.idTag} placeholder="04A1B2C3" onChange={(e) => setRemote({ ...remote, idTag: e.target.value })} /></Field>
           <Field label="Conector"><input type="number" value={remote.connectorId} onChange={(e) => setRemote({ ...remote, connectorId: e.target.value })} /></Field>
         </Modal>
       )}
       {qr && <QrSheet charger={qr} onClose={() => setQr(null)} />}
       {log && (
-        <Modal title="Mensajes OCPP" subtitle="Los últimos 200, del más nuevo al más viejo." size="wide" onClose={() => setLog(null)}>
+        <Modal icon="list" tone="blue" title="Mensajes OCPP" subtitle="Los últimos 200, del más nuevo al más viejo." size="wide" onClose={() => setLog(null)}>
           <div className="tablewrap" style={{ maxHeight: '62vh' }}><table className="table">
             <thead><tr><th>Hora</th><th /><th>Mensaje</th><th>Datos</th></tr></thead>
             <tbody>{log.map((m) => <tr key={m.id}><td style={{ whiteSpace: 'nowrap' }}>{dt(m.ts)}</td><td className="subtle">{m.direction === 'in' ? 'Recibido' : 'Enviado'}</td><td><b>{m.action}</b></td><td className="mono" style={{ maxWidth: 460, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{JSON.stringify(m.payload)}</td></tr>)}</tbody>
@@ -303,7 +303,7 @@ function AccountSheet({ account, onClose }) {
     .then(() => { setPay({ kind: 'payment', amount: '', description: '' }); reload(); }).catch(() => {});
   const invite = () => act(() => api(`/accounts/${account.id}/invite`, { method: 'POST' }), 'Código nuevo generado').then((r) => setCode(r.invite_code)).catch(() => {});
   return (
-    <Modal title={who(account.unit, account.name)} subtitle={data ? `Saldo ${money(data.balance)}` : ' '} size="lg" onClose={onClose}>
+    <Modal icon="users" tone="blue" title={who(account.unit, account.name)} subtitle={data ? `Saldo ${money(data.balance)}` : ' '} size="lg" onClose={onClose}>
       <div style={{ marginBottom: 16 }}><Segmented value={tab} onChange={setTab} options={[['mov', 'Movimientos'], ['app', 'App']]} /></div>
       {tab === 'mov' ? (
         <>
