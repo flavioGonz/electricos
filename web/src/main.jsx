@@ -9,6 +9,7 @@ import { api, getToken, setToken } from './api.js';
 import { useApi } from './hooks.js';
 import UserApp from './UserApp.jsx';
 import LoginScene from './components/LoginScene.jsx';
+import { AdminUsers, AppUsers, ChargerModels, Audit } from './settings.jsx';
 import { Tooltip } from 'react-tooltip';
 import { Dashboard, Chargers, Tariffs, Sites, Accounts, Cards, Sessions, Report, OwnersReport, Alerts, Reservations, Payments } from './pages.jsx';
 
@@ -25,6 +26,10 @@ const NAV = [
   { to: '/pagos', label: 'Pagos online', icon: 'dollar', section: 'Cobro', page: Payments },
   { to: '/tarifas', label: 'Tarifas', icon: 'clock', section: 'Cobro', page: Tariffs },
   { to: '/sitios', label: 'Sitios', icon: 'pin', section: 'Configuración', page: Sites },
+  { to: '/drivers', label: 'Cargadores compatibles', icon: 'wrench', section: 'Configuración', page: ChargerModels },
+  { to: '/usuarios-app', label: 'Usuarios de la app', icon: 'phone', section: 'Configuración', page: AppUsers },
+  { to: '/usuarios', label: 'Usuarios del panel', icon: 'lock', section: 'Configuración', page: AdminUsers, roles: ['admin'] },
+  { to: '/auditoria', label: 'Auditoría', icon: 'eye', section: 'Configuración', page: Audit, roles: ['admin', 'operador'] },
 ];
 
 function Login({ onLogin }) {
@@ -88,12 +93,13 @@ function Admin({ me, onLogout }) {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
   const go = (to) => { window.history.pushState({}, '', to); setPath(to); window.scrollTo(0, 0); };
-  const nav = NAV.map((n) => (n.to === '/alertas' && dash?.alerts_open ? { ...n, badge: dash.alerts_open } : n));
-  const item = NAV.find((n) => n.to === path) || NAV[0];
+  const allowed = NAV.filter((n) => !n.roles || n.roles.includes(me.level || 'admin'));
+  const nav = allowed.map((n) => (n.to === '/alertas' && dash?.alerts_open ? { ...n, badge: dash.alerts_open } : n));
+  const item = allowed.find((n) => n.to === path) || allowed[0];
   const Page = item.page;
   return (
     <AppShell nav={nav} active={item.to} onNavigate={go} user={{ name: me.name || 'Administrador', email: me.email }} onLogout={onLogout}>
-      <Page key={item.to} go={go} />
+      <Page key={item.to} go={go} me={me} />
     </AppShell>
   );
 }
@@ -109,7 +115,7 @@ function App() {
     return () => window.removeEventListener('logout', onOut);
   }, []);
   if (!checked) return null;
-  if (!me) return <Login onLogin={(r) => setMe({ email: r.email, name: r.name })} />;
+  if (!me) return <Login onLogin={() => api('/me').then(setMe)} />;
   return <Admin me={me} onLogout={() => { setToken(null); setMe(null); }} />;
 }
 

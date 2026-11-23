@@ -97,6 +97,7 @@ export function Chargers() {
   const { data, reload } = useApi('/chargers', { live: true });
   const sites = useApi('/sites').data || [];
   const accounts = useApi('/accounts').data || [];
+  const models = useApi('/charger-models').data || [];
   const [edit, setEdit] = useState(null);
   const [remote, setRemote] = useState(null);
   const [log, setLog] = useState(null);
@@ -107,7 +108,7 @@ export function Chargers() {
     const v = edit;
     await act(() => api(`/chargers/${encodeURIComponent(v.id)}`, { method: 'PATCH', body: {
       name: v.name || '', site_id: v.site_id ? Number(v.site_id) : null, approved: !!v.approved, max_amps: Number(v.max_amps) || 32,
-      owner_account_id: v.owner_account_id ? Number(v.owner_account_id) : null,
+      owner_account_id: v.owner_account_id ? Number(v.owner_account_id) : null, model_id: v.model_id ? Number(v.model_id) : null,
     } }), 'Cargador actualizado').then(() => { setEdit(null); reload(); }).catch(() => {});
   };
   const cmd = (c, action, body, msg) => act(() => api(`/chargers/${encodeURIComponent(c.id)}/${action}`, { method: 'POST', body: body || {} }), msg).then(reload).catch(() => {});
@@ -127,6 +128,7 @@ export function Chargers() {
               </div>
               <div className="meta">
                 {c.site_name || 'Sin sitio asignado'} · {c.vendor ? `${c.vendor} ${c.model || ''}` : 'Modelo desconocido'} · {c.max_amps} A<br />
+                <span data-tip={c.config_applied_at ? `Configuración aplicada ${ago(c.config_applied_at)}` : 'Configuración todavía no aplicada'}>Driver: {c.model_name || 'sin asignar'}{c.model_ute_approved ? ' · homologado UTE' : ''}</span><br />
                 {c.owner_name ? `Exclusivo de ${c.owner_name}` : 'Compartido'} · señal {ago(c.last_seen)}
               </div>
               <div className="row wrap">{c.connectors.filter((k) => k.connector_id > 0).map((k) => <StatusBadge key={k.connector_id} s={k.status} />)}</div>
@@ -155,7 +157,16 @@ export function Chargers() {
             <Field label="Sitio"><select value={edit.site_id || ''} onChange={(e) => setEdit({ ...edit, site_id: e.target.value })}><option value="">—</option>{sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
             <Field label="Corriente máxima (A)"><input type="number" value={edit.max_amps} onChange={(e) => setEdit({ ...edit, max_amps: e.target.value })} /></Field>
             <Field className="full" label="Uso" hint="Exclusivo: solo las tarjetas de esa cuenta pueden cargar."><select value={edit.owner_account_id || ''} onChange={(e) => setEdit({ ...edit, owner_account_id: e.target.value })}><option value="">Compartido entre las cuentas del sitio</option>{accounts.map((a) => <option key={a.id} value={a.id}>Exclusivo de {who(a.unit, a.name)}</option>)}</select></Field>
+            <Field className="full" label="Driver" hint={edit.vendor ? `El equipo informa ${edit.vendor} ${edit.model || ''}.` : 'Se detecta solo cuando el equipo se conecta.'}>
+              <select value={edit.model_id || ''} onChange={(e) => setEdit({ ...edit, model_id: e.target.value })}><option value="">Sin driver</option>{models.map((m) => <option key={m.id} value={m.id}>{m.name}{m.vendor !== '*' ? ` · ${m.vendor}` : ''}</option>)}</select>
+            </Field>
             <div className="field full"><Switch label="Aprobado para autorizar cargas" checked={edit.approved} onChange={(v) => setEdit({ ...edit, approved: v })} /></div>
+            {edit.connected && edit.model_id && (
+              <div className="field full">
+                <button type="button" className="btn tint" onClick={() => cmd(edit, 'apply-driver', {}, 'Configuración del driver aplicada')}><Icon name="wrench" size={15} />Aplicar la configuración del driver ahora</button>
+                {edit.config_result && <div className="hint" style={{ marginTop: 8 }}>Última vez {ago(edit.config_applied_at)}: {Object.entries(edit.config_result).map(([k, v]) => `${k} ${v === 'Accepted' ? '✓' : v}`).join(' · ')}</div>}
+              </div>
+            )}
           </div>
         </Modal>
       )}

@@ -1,4 +1,5 @@
 // Servidor central OCPP 1.6J: recibe a los cargadores, autoriza tarjetas, registra sesiones y cobra.
+import { audit } from './audit.js';
 import { RPCServer } from 'ocpp-rpc';
 import { EventEmitter } from 'node:events';
 import { one, many, q, tx } from './db.js';
@@ -64,6 +65,39 @@ async function resolveTariff(accountId, chargerId) {
         (SELECT s.tariff_id FROM chargers c JOIN sites s ON s.id=c.site_id WHERE c.id=$2))`,
     [accountId, chargerId],
   );
+}
+
+/** Busca el driver que corresponde a una marca y modelo (el más específico gana). */
+export async function matchModel(vendor, model) {
+  return one(
+    `SELECT * FROM charger_models WHERE active
+        AND COALESCE($1,'') ILIKE replace(replace(vendor,'%','\\%'),'*','%') AND COALESCE($2,'') ILIKE replace(replace(model_pattern,'%','\\%'),'*','%')
+      ORDER BY (vendor='*'), (model_pattern='*'), length(model_pattern) DESC LIMIT 1`,
+    [vendor ?? '', model ?? ''],
+  );
+}
+
+/** Aplica la configuración del driver con ChangeConfiguration y guarda el resultado de cada clave. */
+export async function applyDriver(chargerId) {
+  const client = clients.get(chargerId);
+  if (!client) throw Object.assign(new Error('el cargador no está conectado'), { statusCode: 409 });
+  const ch = await one('SELECT c.model_id, m.config, m.name FROM chargers c LEFT JOIN charger_models m ON m.id=c.model_id WHERE c.id=$1', [chargerId]);
+  const config = ch?.config || {};
+  const result = {};
+  for (const [key, value] of Object.entries(config)) {
+    try {
+      const r = await client.call('ChangeConfiguration', { key, value: String(value) });
+      result[key] = r.status;
+    } catch (e) {
+      result[key] = 'Error';
+    }
+  }
+  await q('UPDATE chargers SET config_applied_at=now(), config_result=$2 WHERE id=$1', [chargerId, JSON.stringify(result)]);
+  const failed = Object.entries(result).filter(([, v]) => !['Accepted', 'RebootRequired'].includes(v)).map(([k]) => k);
+  await audit({ actorType: 'sistema', actorName: 'Sistema', action: 'comando', entity: 'chargers', entityId: chargerId,
+    summary: `aplicó el driver «${ch?.name || 'sin driver'}» a ${chargerId}${failed.length ? ` (rechazó: ${failed.join(', ')})` : ''}`, data: result });
+  events.emit('change', { type: 'driver', chargerId });
+  return { model: ch?.name || null, result };
 }
 
 /** Extrae energía (Wh) y potencia (W) de un MeterValue de OCPP 1.6. */
@@ -217,6 +251,10 @@ export function createOcppServer({ log = console } = {}) {
         `UPDATE chargers SET vendor=$2, model=$3, serial=$4, firmware=$5, last_seen=now() WHERE id=$1 RETURNING approved`,
         [id, params.chargePointVendor, params.chargePointModel, params.chargePointSerialNumber ?? params.chargeBoxSerialNumber ?? null, params.firmwareVersion ?? null],
       );
+      // Driver: se detecta por marca y modelo, y si el equipo está aprobado se le aplica su configuración
+      const model = await matchModel(params.chargePointVendor, params.chargePointModel);
+      if (model) await q('UPDATE chargers SET model_id=$2 WHERE id=$1 AND model_id IS NULL', [id, model.id]);
+      if (c?.approved) setTimeout(() => applyDriver(id).catch(() => {}), 3000);
       events.emit('change', { type: 'boot', chargerId: id });
       return { status: c?.approved ? 'Accepted' : 'Pending', currentTime: new Date().toISOString(), interval: HEARTBEAT_INTERVAL };
     });

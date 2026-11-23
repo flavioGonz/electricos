@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { one, many, q, tx } from './db.js';
 import { clients, events, accountBalance } from './ocpp.js';
 import { rateAt } from './billing.js';
+import { audit } from './audit.js';
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -110,6 +111,7 @@ export default async function appApi(app) {
       await db.query(`INSERT INTO cards(id_tag, account_id, label, app_user_id) VALUES ($1,$2,$3,$4)`, [appTag(u.id), accountId, `App de ${name}`, u.id]);
       return u;
     });
+    await audit({ actorType: 'app', actorId: user.id, actorName: name, action: 'crear', entity: 'app-users', entityId: user.id, summary: `se registró en la app${inviteCode ? ' con código de invitación' : ''}`, ip: req.ip });
     return reply.code(201).send({ token: app.jwt.sign({ sub: user.id, acc: user.account_id, role: 'user' }, { expiresIn: '90d' }), user });
   });
 
@@ -210,6 +212,7 @@ export default async function appApi(app) {
       const tag = appTag(req.appUser.id);
       const r = await client.call('RemoteStartTransaction', { idTag: tag, connectorId: Number(req.body?.connectorId || 1) });
       if (r.status !== 'Accepted') throw new HttpError(409, 'El cargador rechazó el inicio. ¿Está enchufado el auto?');
+      await audit({ actorType: 'app', actorId: req.appUser.id, actorName: `usuario ${req.appUser.id}`, action: 'comando', entity: 'chargers', entityId: req.params.id, summary: `inició una carga desde la app en ${req.params.id}`, ip: req.ip });
       return { ok: true, message: 'Listo. Si no lo hiciste, enchufá el auto: la carga empieza sola.' };
     });
 

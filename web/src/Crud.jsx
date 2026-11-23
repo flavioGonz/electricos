@@ -15,7 +15,7 @@ const toLocalInput = (v) => {
  * fields: [{ name, label, type: 'text'|'number'|'select'|'checkbox'|'datetime'|'heading', options, required, placeholder, help, createOnly, half, show(values) }]
  * columns: [{ label, render(row), right? }]
  */
-export default function CrudPage({ title, singular, desc, icon, path, keyField = 'id', fields, columns, defaults = {}, emptyTitle, emptyText, rowActions, extraActions, onSaved }) {
+export default function CrudPage({ title, singular, desc, icon, path, keyField = 'id', fields, columns, defaults = {}, emptyTitle, emptyText, rowActions, extraActions, onSaved, canDelete = () => true, readOnly = false }) {
   const { data, error, reload } = useApi(path);
   const [edit, setEdit] = useState(null);
   const [del, setDel] = useState(null);
@@ -74,7 +74,7 @@ export default function CrudPage({ title, singular, desc, icon, path, keyField =
                 <td className="actions">
                   {rowActions?.(row, reload)}
                   <button className="btn ghost icon sm" aria-label="Editar" data-tip="Editar" onClick={() => open(row)}><Icon name="edit" size={15} /></button>
-                  <button className="btn ghost icon sm" aria-label="Eliminar" data-tip="Eliminar" onClick={() => setDel(row)}><Icon name="trash" size={15} /></button>
+                  {canDelete(row) && <button className="btn ghost icon sm" aria-label="Eliminar" data-tip="Eliminar" onClick={() => setDel(row)}><Icon name="trash" size={15} /></button>}
                 </td>
               </tr>
             ))}
@@ -94,14 +94,16 @@ export default function CrudPage({ title, singular, desc, icon, path, keyField =
               if (f.type === 'checkbox') return <div key={f.name} className="field full"><Switch label={f.help || f.label} checked={!!v} onChange={(c) => set(f.name, c)} /></div>;
               return (
                 <Field key={f.name} className={f.half ? '' : 'full'} label={f.label + (f.required ? '' : ' (opcional)')} hint={f.help}>
-                  {f.type === 'select' ? (
+                  {f.type === 'textarea' ? (
+                    <textarea rows={f.rows || 6} className={f.mono ? 'mono' : ''} value={typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : v} placeholder={f.placeholder} onChange={(e) => set(f.name, e.target.value)} />
+                  ) : f.type === 'select' ? (
                     <select value={v ?? ''} onChange={(e) => set(f.name, e.target.value)}>
                       {!f.required && <option value="">—</option>}
                       {(opts || []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                   ) : (
                     <input
-                      type={f.type === 'number' ? 'number' : f.type === 'datetime' ? 'datetime-local' : f.type === 'email' ? 'email' : 'text'}
+                      type={f.type === 'number' ? 'number' : f.type === 'datetime' ? 'datetime-local' : f.type === 'email' ? 'email' : f.type === 'password' ? 'password' : 'text'}
                       inputMode={f.type === 'number' ? 'decimal' : undefined}
                       step={f.step || 'any'}
                       value={f.type === 'datetime' ? toLocalInput(v) : v}
