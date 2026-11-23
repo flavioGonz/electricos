@@ -8,7 +8,7 @@ import { getSetting, getSettingPublic, setSetting } from './settings.js';
 import { siteStatus } from './power.js';
 import { generateDrafts, issue, cancelInvoice } from './invoices.js';
 import { consumo } from './consumo.js';
-import { newSecret, verifyTotp, otpauthUri, sealSecret, openSecret, issueWaCode, checkWaCode, lockMessage, registerFailure, clearFailures } from './security.js';
+import { newSecret, verifyTotp, otpauthUri, sealSecret, openSecret, issueWaCode, checkWaCode, lockMessage, registerFailure, clearFailures, limitHook } from './security.js';
 import { sendWhatsApp, sendEmail, sendTelegram, notifyAdmins, recentNotifications, notificationStats } from './notify.js';
 import { tgStatus, tgLinkCode } from './telegram.js';
 import { randomBytes } from 'node:crypto';
@@ -71,7 +71,9 @@ function monthRange(month) {
 }
 
 const csvCell = (v) => {
-  const s = v == null ? '' : String(v);
+  let s = v == null ? '' : String(v);
+  // Evita la inyección de fórmulas al abrir el CSV en Excel (un email como "=HYPERLINK(...)" en un ingreso fallido)
+  if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+([.,]\d+)?$/.test(s)) s = `'${s}`;
   return /[",;\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
@@ -89,7 +91,9 @@ export default async function api(app) {
   app.setErrorHandler((err, req, reply) => {
     const status = err.statusCode || (err.code === '23505' ? 409 : err.code === '23503' ? 409 : err.code?.startsWith?.('22') ? 400 : 500);
     if (status >= 500) req.log.error(err);
-    const message = err.code === '23505' ? 'ya existe' : err.code === '23503' ? 'está en uso o referencia algo que no existe' : err.message;
+    // Los errores internos no se muestran tal cual (pueden incluir detalles de la base o de la red interna)
+    const message = err.code === '23505' ? 'ya existe' : err.code === '23503' ? 'está en uso o referencia algo que no existe'
+      : status >= 500 && !err.statusCode ? 'error interno, probá de nuevo en unos minutos' : err.message;
     reply.code(status).send({ error: message });
   });
 
@@ -124,7 +128,8 @@ export default async function api(app) {
     if (locked) throw new HttpError(423, locked);
     return admin;
   };
-  app.post('/auth/login', async (req) => {
+  const loginLimit = { onRequest: limitHook({ max: 10, windowMs: 60_000 }) };
+  app.post('/auth/login', loginLimit, async (req) => {
     const { email, password } = req.body || {};
     const mail = String(email || '').trim().toLowerCase();
     const admin = await one('SELECT * FROM admins WHERE email=$1', [mail]);
@@ -139,7 +144,7 @@ export default async function api(app) {
     }
     return finishLogin(admin, req);
   });
-  app.post('/auth/2fa', async (req) => {
+  app.post('/auth/2fa', loginLimit, async (req) => {
     const admin = await mfaAdmin(req.body?.ticket);
     const code = req.body?.code;
     if (verifyTotp(openSecret(admin.totp_secret), code)) return finishLogin(admin, req, ' con doble factor');
@@ -147,7 +152,7 @@ export default async function api(app) {
     await failed(admin, req, admin.name || admin.email, 'puso mal el código de doble factor');
     throw new HttpError(401, 'el código no es correcto');
   });
-  app.post('/auth/2fa/whatsapp', async (req) => {
+  app.post('/auth/2fa/whatsapp', { onRequest: limitHook({ max: 3, windowMs: 5 * 60_000 }) }, async (req) => {
     const admin = await mfaAdmin(req.body?.ticket);
     if (!admin.phone) throw new HttpError(400, 'tu usuario no tiene un celular cargado');
     const code = issueWaCode(admin.id);
@@ -180,10 +185,16 @@ export default async function api(app) {
         throw new HttpError(401, 'sesión vencida o inválida');
       }
       if (req.user.role !== 'admin') throw new HttpError(401, 'sesión vencida o inválida');
-      const me = await one('SELECT id, email, name, role, active, site_ids FROM admins WHERE id=$1', [req.user.sub]);
+      const me = await one('SELECT id, email, name, role, active, site_ids, totp_enabled, tokens_valid_after FROM admins WHERE id=$1', [req.user.sub]);
       if (!me || !me.active) throw new HttpError(401, 'tu usuario fue deshabilitado');
+      if (me.tokens_valid_after && req.user.iat * 1000 < new Date(me.tokens_valid_after).getTime() - 1000) throw new HttpError(401, 'sesión vencida o inválida');
       req.admin = me;
       const url = req.routeOptions.url || '';
+      // Doble factor obligatorio: hasta configurarlo solo puede ver su perfil y activar el 2FA
+      if (!me.totp_enabled && !(url === '/api/me' || url.startsWith('/api/me/2fa') || url === '/api/me/password')) {
+        const sec = await getSetting('seguridad').catch(() => ({}));
+        if (sec.require_2fa_admins) throw new HttpError(403, 'activá el doble factor para seguir usando el panel');
+      }
       if (me.role === 'edificio') {
         const own = url === '/api/me/password' || url.startsWith('/api/me/2fa');
         if (own) return;
@@ -260,7 +271,7 @@ export default async function api(app) {
     priv.get('/admins', async () => many('SELECT id, email, name, phone, role, active, site_ids, last_login_at, created_at, totp_enabled, CASE WHEN locked_until > now() THEN locked_until END AS locked_until FROM admins ORDER BY active DESC, name'));
     priv.post('/admins/:id/unlock', async (req) => { await clearFailures('admins', Number(req.params.id)); return { ok: true }; });
     priv.post('/admins/:id/reset-2fa', async (req) => {
-      const r = await one('UPDATE admins SET totp_secret=NULL, totp_pending=NULL, totp_enabled=false WHERE id=$1 RETURNING id', [req.params.id]);
+      const r = await one('UPDATE admins SET totp_secret=NULL, totp_pending=NULL, totp_enabled=false, tokens_valid_after=now() WHERE id=$1 RETURNING id', [req.params.id]);
       if (!r) throw notFound();
       return { ok: true };
     });
@@ -289,12 +300,14 @@ export default async function api(app) {
       const cur = await one('SELECT * FROM admins WHERE id=$1', [req.params.id]);
       if (!cur) throw notFound();
       if (cur.role === 'admin' && cur.active) await lastAdminGuard(cur.id, { role: data.role ?? cur.role, active: data.active ?? cur.active });
+      // Si le bajan permisos o lo deshabilitan, se cierran sus sesiones abiertas
+      if ((data.role && data.role !== cur.role) || data.active === false || ('site_ids' in data && cur.role === 'edificio')) data.tokens_valid_after = new Date();
       const r = await update('admins', 'id', req.params.id, data);
       return { id: r.id, email: r.email, name: r.name, phone: r.phone, role: r.role, active: r.active, site_ids: r.site_ids };
     });
     priv.post('/admins/:id/reset-password', async (req) => {
       const pass = randomBytes(6).toString('base64url');
-      const r = await one('UPDATE admins SET password_hash=$2, failed_attempts=0, locked_until=NULL WHERE id=$1 RETURNING id', [req.params.id, await bcrypt.hash(pass, 10)]);
+      const r = await one('UPDATE admins SET password_hash=$2, failed_attempts=0, locked_until=NULL, tokens_valid_after=now() WHERE id=$1 RETURNING id', [req.params.id, await bcrypt.hash(pass, 10)]);
       if (!r) throw notFound();
       return { temp_password: pass };
     });
@@ -560,8 +573,14 @@ export default async function api(app) {
     });
 
     // Cargadores: se crean solos al conectarse; acá se aprueban y configuran
+    // El hash de la contraseña OCPP nunca sale de la API: solo si tiene una propia o no
+    const chargerOut = (c) => {
+      if (!c) return c;
+      const { ocpp_password_hash, ...rest } = c;
+      return { ...rest, ocpp_password: !!ocpp_password_hash };
+    };
     priv.get('/chargers', async () =>
-      many(`SELECT c.*, s.name AS site_name, a.name AS owner_name,
+      (await many(`SELECT c.*, s.name AS site_name, a.name AS owner_name,
               COALESCE((SELECT json_agg(json_build_object('connector_id', k.connector_id, 'status', k.status, 'error_code', k.error_code, 'updated_at', k.updated_at) ORDER BY k.connector_id)
                 FROM connectors k WHERE k.charger_id=c.id), '[]') AS connectors,
               COALESCE((SELECT json_agg(json_build_object('id', x.id, 'connector_id', x.connector_id, 'id_tag', x.id_tag, 'account', ac.name, 'started_at', x.started_at,
@@ -569,17 +588,40 @@ export default async function api(app) {
                 FROM sessions x LEFT JOIN accounts ac ON ac.id=x.account_id WHERE x.charger_id=c.id AND x.status='active'), '[]') AS active_sessions
             , m.name AS model_name, m.ute_approved AS model_ute_approved
             FROM chargers c LEFT JOIN sites s ON s.id=c.site_id LEFT JOIN accounts a ON a.id=c.owner_account_id LEFT JOIN charger_models m ON m.id=c.model_id
-            ORDER BY c.approved, s.name NULLS LAST, c.id`),
+            ORDER BY c.approved, s.name NULLS LAST, c.id`)).map(chargerOut),
     );
     priv.post('/chargers', async (req, reply) =>
-      reply.code(201).send(await insert('chargers', pick(req.body, ['id', 'site_id', 'name', 'approved', 'max_amps', 'owner_account_id']))),
+      reply.code(201).send(chargerOut(await insert('chargers', pick(req.body, ['id', 'site_id', 'name', 'approved', 'max_amps', 'owner_account_id'])))),
     );
     priv.patch('/chargers/:id', async (req) => {
       const before = await one('SELECT approved FROM chargers WHERE id=$1', [req.params.id]);
       const row = await update('chargers', 'id', req.params.id, pick(req.body, ['site_id', 'name', 'approved', 'max_amps', 'owner_account_id', 'model_id']));
       // Al aprobarlo, si está conectado, se le aplica su driver
       if (!before?.approved && row.approved && clients.has(row.id)) setTimeout(() => applyDriver(row.id).catch(() => {}), 500);
-      return row;
+      return chargerOut(row);
+    });
+
+    // Contraseña OCPP propia del cargador (Security Profile 1/2). Si está conectado se la manda con
+    // ChangeConfiguration AuthorizationKey y se guarda solo cuando el equipo la acepta. Con {manual:true}
+    // se guarda sin mandarla (para cargarla a mano en el equipo). La contraseña se muestra una sola vez.
+    priv.post('/chargers/:id/ocpp-password', async (req) => {
+      if (req.admin.role !== 'admin') throw new HttpError(403, 'solo un administrador cambia la contraseña de un cargador');
+      const c = await one('SELECT id FROM chargers WHERE id=$1', [req.params.id]);
+      if (!c) throw notFound();
+      const password = randomBytes(12).toString('hex'); // 24 caracteres: dentro de los 16 a 40 que pide OCPP
+      let sent = null;
+      if (!req.body?.manual) {
+        const r = await online(c.id).call('ChangeConfiguration', { key: 'AuthorizationKey', value: password });
+        sent = r.status;
+        if (!['Accepted', 'RebootRequired'].includes(r.status)) throw new HttpError(409, `el cargador respondió ${r.status} al cambiar la contraseña`);
+      }
+      await q('UPDATE chargers SET ocpp_password_hash=$2, ocpp_password_set_at=now() WHERE id=$1', [c.id, await bcrypt.hash(password, 10)]);
+      return { password, sent, url: `wss://${(process.env.PUBLIC_URL || 'https://electricos.infratec.com.uy').replace(/^https?:\/\//, '').replace(/\/$/, '')}/ocpp/${c.id}` };
+    });
+    priv.delete('/chargers/:id/ocpp-password', async (req) => {
+      if (req.admin.role !== 'admin') throw new HttpError(403, 'solo un administrador cambia la contraseña de un cargador');
+      await q('UPDATE chargers SET ocpp_password_hash=NULL, ocpp_password_set_at=NULL WHERE id=$1', [req.params.id]);
+      return { ok: true };
     });
     priv.delete('/chargers/:id', async (req, reply) => {
       const used = await one('SELECT 1 FROM sessions WHERE charger_id=$1 LIMIT 1', [req.params.id]);

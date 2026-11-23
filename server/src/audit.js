@@ -31,7 +31,7 @@ const COMMANDS = {
   approve: 'aprobó', 'remote-start': 'inició una carga remota en', 'remote-stop': 'detuvo la carga en', reset: 'reinició',
   unlock: 'desbloqueó el conector de', 'local-list': 'envió la lista de tarjetas a', configuration: 'cambió la configuración de',
   'apply-driver': 'aplicó el driver a', close: 'cerró', resolve: 'resolvió', invite: 'generó un código de invitación para',
-  'reset-password': 'restableció la contraseña de', movements: 'registró un movimiento en', password: 'cambió su contraseña',
+  'reset-password': 'restableció la contraseña de', movements: 'registró un movimiento en', password: 'cambió su contraseña', 'ocpp-password': 'cambió la contraseña OCPP de',
 };
 
 /** Describe una petición del panel (POST/PATCH/DELETE) en una frase. */

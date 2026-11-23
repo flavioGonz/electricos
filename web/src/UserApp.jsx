@@ -77,7 +77,7 @@ function Auth({ onDone, chargerId }) {
             {mode === 'register' && <label className="u-row"><span>Nombre</span><input value={v.name} onChange={set('name')} autoComplete="name" placeholder="Nombre y apellido" /></label>}
             <label className="u-row"><span>Email</span><input type="email" value={v.email} onChange={set('email')} autoComplete="email" placeholder="tu@email.com" /></label>
             {mode === 'register' && <label className="u-row"><span>Celular</span><input type="tel" value={v.phone} onChange={set('phone')} autoComplete="tel" placeholder="Opcional" /></label>}
-            <label className="u-row"><span>Contraseña</span><input type="password" value={v.password} onChange={set('password')} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder={mode === 'login' ? '' : 'Mínimo 6 caracteres'} /></label>
+            <label className="u-row"><span>Contraseña</span><input type="password" value={v.password} onChange={set('password')} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder={mode === 'login' ? '' : 'Mínimo 8 caracteres'} /></label>
           </div>
           {mode === 'register' && (
             <>
