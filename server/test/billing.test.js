@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { priceSession, isOffpeak } from '../src/billing.js';
+import { priceSession, isOffpeak, bandAt } from '../src/billing.js';
 import { parseMeterValue } from '../src/ocpp.js';
 
 const tariff = { price_kwh: 10, offpeak_price_kwh: 4, offpeak_start_hour: 0, offpeak_end_hour: 7, session_fee: 5 };
@@ -42,4 +42,29 @@ test('lee MeterValues en kWh y W, sin medición por fase', () => {
     { value: '2300', measurand: 'Power.Active.Import', unit: 'W', phase: 'L1' },
   ] });
   assert.deepEqual(r, { energy: 12500, power: 7000 });
+});
+
+test('franjas UTE: costo + margen y separación del margen', () => {
+  const t = {
+    mode: 'franjas', session_fee: 0, punta_weekdays_only: true,
+    punta_start_hour: 18, punta_end_hour: 22, valle_start_hour: 0, valle_end_hour: 7,
+    cost_punta: 12, cost_llano: 6, cost_valle: 3, margin_punta: 1, margin_llano: 1, margin_valle: 2,
+  };
+  // lunes 23/11/2026: 03:00 local valle, 10:00 llano, 19:00 punta
+  const r = priceSession(t, [
+    { ts: '2026-11-23T05:00:00Z', energy_wh: 0 },
+    { ts: '2026-11-23T06:00:00Z', energy_wh: 1000 }, // valle 1 kWh x (3+2)
+    { ts: '2026-11-23T13:00:00Z', energy_wh: 3000 }, // llano 2 kWh x (6+1)
+    { ts: '2026-11-23T22:00:00Z', energy_wh: 4000 }, // punta 1 kWh x (12+1)
+  ]);
+  assert.equal(r.amount, 5 + 14 + 13);
+  assert.equal(r.energy_cost, 3 + 12 + 12);
+  assert.equal(r.margin, 2 + 2 + 1);
+  assert.deepEqual(r.breakdown.map((b) => b.band).sort(), ['llano', 'punta', 'valle']);
+});
+
+test('fin de semana la punta se cobra como llano', () => {
+  const t = { mode: 'franjas', punta_weekdays_only: true, punta_start_hour: 18, punta_end_hour: 22, valle_start_hour: 0, valle_end_hour: 7 };
+  assert.equal(bandAt(t, new Date('2026-11-21T22:00:00Z')), 'llano'); // sábado 19:00
+  assert.equal(bandAt(t, new Date('2026-11-23T22:00:00Z')), 'punta'); // lunes 19:00
 });

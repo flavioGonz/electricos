@@ -117,7 +117,8 @@ export default async function api(app) {
            (SELECT count(*) FROM accounts WHERE active) AS accounts,
            (SELECT count(*) FROM cards WHERE status='active') AS cards,
            (SELECT COALESCE(SUM(energy_wh),0) FROM sessions WHERE status='completed' AND started_at >= date_trunc('month', now() AT TIME ZONE $1) AT TIME ZONE $1) AS month_energy_wh,
-           (SELECT COALESCE(SUM(amount),0) FROM sessions WHERE status='completed' AND started_at >= date_trunc('month', now() AT TIME ZONE $1) AT TIME ZONE $1) AS month_amount`,
+           (SELECT COALESCE(SUM(amount),0) FROM sessions WHERE status='completed' AND started_at >= date_trunc('month', now() AT TIME ZONE $1) AT TIME ZONE $1) AS month_amount,
+           (SELECT COALESCE(SUM(margin),0) FROM sessions WHERE status='completed' AND started_at >= date_trunc('month', now() AT TIME ZONE $1) AT TIME ZONE $1) AS month_margin`,
         [TZ],
       );
     });
@@ -125,13 +126,18 @@ export default async function api(app) {
     crud(priv, {
       path: '/tariffs',
       table: 'tariffs',
-      fields: ['name', 'currency', 'price_kwh', 'offpeak_price_kwh', 'offpeak_start_hour', 'offpeak_end_hour', 'session_fee'],
+      fields: [
+        'name', 'currency', 'mode', 'session_fee',
+        'price_kwh', 'offpeak_price_kwh', 'offpeak_start_hour', 'offpeak_end_hour', 'energy_cost_kwh',
+        'punta_start_hour', 'punta_end_hour', 'valle_start_hour', 'valle_end_hour', 'punta_weekdays_only',
+        'cost_punta', 'cost_llano', 'cost_valle', 'margin_punta', 'margin_llano', 'margin_valle',
+      ],
     });
 
     crud(priv, {
       path: '/sites',
       table: 'sites',
-      fields: ['name', 'kind', 'address', 'max_amps', 'tariff_id'],
+      fields: ['name', 'kind', 'address', 'max_amps', 'tariff_id', 'line_owner', 'owner_name', 'owner_contact'],
       list: `SELECT s.*, t.name AS tariff_name,
                (SELECT count(*) FROM chargers c WHERE c.site_id=s.id) AS chargers,
                (SELECT count(*) FROM accounts a WHERE a.site_id=s.id) AS accounts
@@ -232,6 +238,30 @@ export default async function api(app) {
       if (!['payment', 'adjustment'].includes(kind)) throw new HttpError(400, 'kind debe ser payment o adjustment');
       if (!Number.isFinite(Number(amount)) || Number(amount) === 0) throw new HttpError(400, 'monto inválido');
       return reply.code(201).send(await insert('movements', { account_id: Number(req.params.id), kind, amount: Number(amount), description }));
+    });
+
+    // Liquidación al propietario de la línea: lo cobrado, el costo de energía a devolverle y el margen del operador, por sitio.
+    priv.get('/reports/owners', async (req, reply) => {
+      const [from, to] = monthRange(req.query.month);
+      const rows = await many(
+        `SELECT s.id AS site_id, s.name AS site, s.line_owner, s.owner_name, s.owner_contact,
+                count(x.id) AS sessions, COALESCE(SUM(x.energy_wh),0) AS energy_wh, COALESCE(SUM(x.amount),0) AS amount,
+                COALESCE(SUM(x.energy_cost),0) AS energy_cost, COALESCE(SUM(x.margin),0) AS margin,
+                CASE WHEN s.line_owner='cliente' THEN COALESCE(SUM(x.energy_cost),0) ELSE 0 END AS to_owner
+           FROM sites s
+           LEFT JOIN chargers c ON c.site_id=s.id
+           LEFT JOIN sessions x ON x.charger_id=c.id AND x.status='completed'
+                AND x.started_at >= ($1::date::timestamp AT TIME ZONE $3) AND x.started_at < ($2::date::timestamp AT TIME ZONE $3)
+          GROUP BY s.id ORDER BY s.name`,
+        [from, to, TZ],
+      );
+      if (req.query.format !== 'csv') return rows;
+      const header = ['Sitio', 'Suministro de', 'Propietario', 'Sesiones', 'kWh', 'Cobrado', 'Costo energía', 'A liquidar al propietario', 'Margen'];
+      const lines = rows.map((r) =>
+        [r.site, r.line_owner, r.owner_name, r.sessions, (r.energy_wh / 1000).toFixed(3), r.amount.toFixed(2), r.energy_cost.toFixed(2), r.to_owner.toFixed(2), r.margin.toFixed(2)].map(csvCell).join(';'),
+      );
+      reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="propietarios-${req.query.month}.csv"`);
+      return '\uFEFF' + [header.join(';'), ...lines].join('\n');
     });
 
     // Liquidación mensual por cuenta (para expensas). ?format=csv descarga el archivo.

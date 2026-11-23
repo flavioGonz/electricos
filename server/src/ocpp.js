@@ -2,7 +2,7 @@
 import { RPCServer } from 'ocpp-rpc';
 import { EventEmitter } from 'node:events';
 import { one, many, q, tx } from './db.js';
-import { priceSession } from './billing.js';
+import { priceSession, rateAt } from './billing.js';
 
 export const events = new EventEmitter(); // eventos para el panel en vivo (SSE)
 events.setMaxListeners(100);
@@ -86,19 +86,24 @@ export async function closeSession(sessionId, { meterStop, timestamp, reason }) 
     readings.unshift({ ts: s.started_at, energy_wh: s.meter_start_wh });
     const tariff = s.tariff_id ? (await db.query('SELECT * FROM tariffs WHERE id=$1', [s.tariff_id])).rows[0] : null;
     const priced = priceSession(tariff, readings);
-    // Si el medidor reportó menos que meterStop - meterStart (lecturas perdidas), confiamos en el total del medidor
+    // Si faltan lecturas intermedias y meterStop - meterStart supera lo valorizado, el resto va a la franja del cierre
     const total = Math.max(0, stopWh - s.meter_start_wh);
-    let { energy_wh, amount } = priced;
+    let { energy_wh, amount, energy_cost, margin, breakdown } = priced;
     if (tariff && total > energy_wh) {
-      amount += ((total - energy_wh) / 1000) * Number(tariff.price_kwh);
+      const r = rateAt(tariff, stoppedAt);
+      const extra = total - energy_wh;
+      amount = Math.round((amount + (extra / 1000) * r.price) * 100) / 100;
+      energy_cost = Math.round((energy_cost + (extra / 1000) * r.cost) * 100) / 100;
+      margin = Math.round((amount - energy_cost) * 100) / 100;
+      breakdown = [...breakdown, { band: r.band, price_kwh: r.price, cost_kwh: r.cost, energy_wh: extra, amount: Math.round((extra / 1000) * r.price * 100) / 100 }];
       energy_wh = total;
-      amount = Math.round(amount * 100) / 100;
     }
     const updated = (
       await db.query(
-        `UPDATE sessions SET stopped_at=$2, meter_stop_wh=$3, energy_wh=$4, amount=$5, stop_reason=$6, status='completed', power_w=NULL
+        `UPDATE sessions SET stopped_at=$2, meter_stop_wh=$3, energy_wh=$4, amount=$5, stop_reason=$6, status='completed', power_w=NULL,
+                energy_cost=$7, margin=$8, breakdown=$9
           WHERE id=$1 RETURNING *`,
-        [s.id, stoppedAt, stopWh, energy_wh, amount, reason || null],
+        [s.id, stoppedAt, stopWh, energy_wh, amount, reason || null, tariff ? energy_cost : null, tariff ? margin : null, JSON.stringify(breakdown)],
       )
     ).rows[0];
     if (s.account_id && amount > 0) {

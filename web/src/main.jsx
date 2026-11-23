@@ -7,7 +7,7 @@ import { ToastHost } from './components/toast.jsx';
 import { Icon } from './components/icons.jsx';
 import { Field } from './components/ui.jsx';
 import { api, getToken, setToken } from './api.js';
-import { Dashboard, Chargers, Tariffs, Sites, Accounts, Cards, Sessions, Report } from './pages.jsx';
+import { Dashboard, Chargers, Tariffs, Sites, Accounts, Cards, Sessions, Report, OwnersReport } from './pages.jsx';
 
 const NAV = [
   { to: '/', label: 'Panel', icon: 'home', section: 'Operación', page: Dashboard },
@@ -15,7 +15,8 @@ const NAV = [
   { to: '/sesiones', label: 'Sesiones', icon: 'history', section: 'Operación', page: Sessions },
   { to: '/cuentas', label: 'Cuentas', icon: 'users', section: 'Usuarios', page: Accounts },
   { to: '/tarjetas', label: 'Tarjetas', icon: 'card', section: 'Usuarios', page: Cards },
-  { to: '/liquidacion', label: 'Liquidación', icon: 'file', section: 'Cobro', page: Report },
+  { to: '/liquidacion', label: 'Liquidación por cuenta', icon: 'file', section: 'Cobro', page: Report },
+  { to: '/propietarios', label: 'Liquidación a propietarios', icon: 'building', section: 'Cobro', page: OwnersReport },
   { to: '/tarifas', label: 'Tarifas', icon: 'dollar', section: 'Cobro', page: Tariffs },
   { to: '/sitios', label: 'Sitios', icon: 'building', section: 'Configuración', page: Sites },
 ];

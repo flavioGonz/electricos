@@ -19,6 +19,7 @@ export default function CrudPage({ title, desc, icon, path, keyField = 'id', fie
     const body = {};
     for (const f of fields) {
       if (edit.row && f.createOnly) continue;
+      if (f.type === 'heading') continue;
       let v = edit.values[f.name];
       if (f.type === 'number') v = v === '' || v == null ? null : Number(v);
       if (f.type === 'select' && f.numeric) v = v === '' || v == null ? null : Number(v);
@@ -26,7 +27,7 @@ export default function CrudPage({ title, desc, icon, path, keyField = 'id', fie
       if (f.type === 'datetime') v = v ? new Date(v).toISOString() : null;
       body[f.name] = v;
     }
-    const missing = fields.find((f) => f.required && (body[f.name] == null || body[f.name] === '') && !(edit.row && f.createOnly));
+    const missing = fields.find((f) => f.required && (!f.show || f.show(edit.values)) && (body[f.name] == null || body[f.name] === '') && !(edit.row && f.createOnly));
     if (missing) return act(async () => { throw new Error(`Falta: ${missing.label}`); });
     await act(
       () => (edit.row ? api(`${path}/${encodeURIComponent(edit.row[keyField])}`, { method: 'PATCH', body }) : api(path, { method: 'POST', body })),
@@ -92,6 +93,8 @@ export default function CrudPage({ title, desc, icon, path, keyField = 'id', fie
         >
           {fields.map((f) => {
             if (edit.row && f.createOnly) return null;
+            if (f.show && !f.show(edit.values)) return null;
+            if (f.type === 'heading') return <h4 key={f.name} style={{ margin: '18px 0 8px' }}>{f.label}</h4>;
             const v = edit.values[f.name] ?? '';
             const opts = typeof f.options === 'function' ? f.options() : f.options;
             return (

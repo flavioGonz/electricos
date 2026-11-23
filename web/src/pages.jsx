@@ -37,6 +37,7 @@ export function Dashboard({ go }) {
           <Stat icon="plug" label="Cargadores en línea" value={`${data.chargers_online} / ${data.chargers}`} tone={data.chargers_online < data.chargers ? 'danger' : 'ok'} />
           <Stat icon="power" label="Energía del mes" value={kwh(data.month_energy_wh)} />
           <Stat icon="dollar" label="Facturado del mes" value={money(data.month_amount)} />
+          <Stat icon="star" label="Margen del mes" value={money(data.month_margin)} />
         </div>
       )}
       {data?.chargers_pending > 0 && (
@@ -157,24 +158,44 @@ export function Chargers() {
 }
 
 // ---------- Tarifas ----------
+const fr = (v) => (v.mode || 'simple') === 'franjas';
+const sp = (v) => !fr(v);
+const bandTxt = (r, b) => `${money(Number(r['cost_' + b] || 0) + Number(r['margin_' + b] || 0), r.currency)} (${money(r['cost_' + b], r.currency)} + ${money(r['margin_' + b], r.currency)})`;
 export function Tariffs() {
   return (
-    <CrudPage title="Tarifas" icon="dollar" path="/tariffs" desc="Precio por kWh, con franja valle opcional (hora de Montevideo)"
-      defaults={{ currency: 'UYU', session_fee: 0 }}
+    <CrudPage title="Tarifas" icon="dollar" path="/tariffs" desc="Precio al usuario = costo de la energía de UTE + margen, por franja horaria (hora de Montevideo)"
+      defaults={{ currency: 'UYU', session_fee: 0, mode: 'franjas', punta_start_hour: 18, punta_end_hour: 22, valle_start_hour: 0, valle_end_hour: 7, punta_weekdays_only: true, margin_punta: 1, margin_llano: 1, margin_valle: 1.5 }}
       emptyText="Creá una tarifa y asignala a un sitio o a una cuenta."
       fields={[
-        { name: 'name', label: 'Nombre', required: true, placeholder: 'Residencial' },
-        { name: 'price_kwh', label: 'Precio por kWh', type: 'number', required: true },
-        { name: 'offpeak_price_kwh', label: 'Precio valle por kWh', type: 'number', help: 'Vacío si no hay franja valle' },
-        { name: 'offpeak_start_hour', label: 'Valle desde (hora 0-23)', type: 'number', step: 1 },
-        { name: 'offpeak_end_hour', label: 'Valle hasta (hora 0-23)', type: 'number', step: 1 },
-        { name: 'session_fee', label: 'Cargo fijo por sesión', type: 'number' },
+        { name: 'name', label: 'Nombre', required: true, placeholder: 'Edificio, triple horario' },
+        { name: 'mode', label: 'Tipo', type: 'select', required: true, options: [{ value: 'franjas', label: 'Por franjas UTE: costo + margen' }, { value: 'simple', label: 'Precio fijo por kWh' }] },
         { name: 'currency', label: 'Moneda', type: 'select', required: true, options: [{ value: 'UYU', label: 'Pesos (UYU)' }, { value: 'USD', label: 'Dólares (USD)' }] },
+        { name: 'h1', type: 'heading', label: 'Horarios', show: fr },
+        { name: 'punta_start_hour', label: 'Punta desde (hora)', type: 'number', step: 1, show: fr, required: true },
+        { name: 'punta_end_hour', label: 'Punta hasta (hora)', type: 'number', step: 1, show: fr, required: true },
+        { name: 'punta_weekdays_only', label: 'Punta', type: 'checkbox', help: 'Solo de lunes a viernes (fines de semana se cobra llano)', show: fr },
+        { name: 'valle_start_hour', label: 'Valle desde (hora)', type: 'number', step: 1, show: fr, required: true },
+        { name: 'valle_end_hour', label: 'Valle hasta (hora)', type: 'number', step: 1, show: fr, required: true },
+        { name: 'h2', type: 'heading', label: 'Costo de la energía (lo que cobra UTE, por kWh)', show: fr },
+        { name: 'cost_punta', label: 'Costo punta', type: 'number', show: fr, required: true },
+        { name: 'cost_llano', label: 'Costo llano', type: 'number', show: fr, required: true },
+        { name: 'cost_valle', label: 'Costo valle', type: 'number', show: fr, required: true },
+        { name: 'h3', type: 'heading', label: 'Margen del operador (por kWh)', show: fr },
+        { name: 'margin_punta', label: 'Margen punta', type: 'number', show: fr, required: true },
+        { name: 'margin_llano', label: 'Margen llano', type: 'number', show: fr, required: true },
+        { name: 'margin_valle', label: 'Margen valle', type: 'number', show: fr, required: true, help: 'Se puede cobrar más margen en valle y seguir siendo más barato que cargar en punta' },
+        { name: 'price_kwh', label: 'Precio por kWh', type: 'number', show: sp, required: true },
+        { name: 'energy_cost_kwh', label: 'Costo de energía por kWh', type: 'number', show: sp, help: 'Para separar costo y margen en la liquidación' },
+        { name: 'offpeak_price_kwh', label: 'Precio valle por kWh', type: 'number', show: sp, help: 'Vacío si no hay franja valle' },
+        { name: 'offpeak_start_hour', label: 'Valle desde (hora)', type: 'number', step: 1, show: sp },
+        { name: 'offpeak_end_hour', label: 'Valle hasta (hora)', type: 'number', step: 1, show: sp },
+        { name: 'session_fee', label: 'Cargo fijo por sesión', type: 'number' },
       ]}
       columns={[
-        { label: 'Nombre', render: (r) => <b>{r.name}</b> },
-        { label: 'kWh', render: (r) => money(r.price_kwh, r.currency) },
-        { label: 'Valle', render: (r) => (r.offpeak_price_kwh != null ? `${money(r.offpeak_price_kwh, r.currency)} de ${r.offpeak_start_hour} a ${r.offpeak_end_hour} h` : '—') },
+        { label: 'Nombre', render: (r) => <><b>{r.name}</b><div className="muted" style={{ fontSize: 12 }}>{r.mode === 'franjas' ? 'Franjas UTE' : 'Precio fijo'}</div></> },
+        { label: 'Punta', render: (r) => (r.mode === 'franjas' ? <>{bandTxt(r, 'punta')}<div className="muted" style={{ fontSize: 12 }}>{r.punta_start_hour} a {r.punta_end_hour} h{r.punta_weekdays_only ? ', lun a vie' : ''}</div></> : '—') },
+        { label: 'Llano / normal', render: (r) => (r.mode === 'franjas' ? bandTxt(r, 'llano') : money(r.price_kwh, r.currency)) },
+        { label: 'Valle', render: (r) => (r.mode === 'franjas' ? <>{bandTxt(r, 'valle')}<div className="muted" style={{ fontSize: 12 }}>{r.valle_start_hour} a {r.valle_end_hour} h</div></> : r.offpeak_price_kwh != null ? `${money(r.offpeak_price_kwh, r.currency)} de ${r.offpeak_start_hour} a ${r.offpeak_end_hour} h` : '—') },
         { label: 'Por sesión', render: (r) => money(r.session_fee, r.currency) },
       ]}
     />
@@ -185,7 +206,7 @@ export function Tariffs() {
 export function Sites() {
   const tariffs = useApi('/tariffs').data || [];
   return (
-    <CrudPage title="Sitios" icon="building" path="/sites" desc="Edificios y barrios" defaults={{ kind: 'edificio' }}
+    <CrudPage title="Sitios" icon="building" path="/sites" desc="Edificios y barrios" defaults={{ kind: 'edificio', line_owner: 'cliente' }}
       emptyText="Un sitio agrupa cargadores y cuentas, y define la tarifa y el límite de potencia."
       fields={[
         { name: 'name', label: 'Nombre', required: true, placeholder: 'Edificio Rambla' },
@@ -193,6 +214,9 @@ export function Sites() {
         { name: 'address', label: 'Dirección' },
         { name: 'tariff_id', label: 'Tarifa', type: 'select', numeric: true, options: () => tariffs.map((t) => ({ value: t.id, label: t.name })) },
         { name: 'max_amps', label: 'Límite total de corriente (A)', type: 'number', step: 1, help: 'Se reparte entre las cargas activas. Vacío = sin límite.' },
+        { name: 'line_owner', label: 'Suministro de UTE a nombre de', type: 'select', required: true, options: [{ value: 'cliente', label: 'El cliente (se le liquida el costo de la energía)' }, { value: 'operador', label: 'Infratec (el operador paga la factura)' }] },
+        { name: 'owner_name', label: 'Propietario de la línea', placeholder: 'Consorcio Edificio Rambla', show: (v) => (v.line_owner || 'cliente') === 'cliente' },
+        { name: 'owner_contact', label: 'Contacto del propietario', placeholder: 'administracion@...', show: (v) => (v.line_owner || 'cliente') === 'cliente' },
       ]}
       columns={[
         { label: 'Sitio', render: (r) => <><b>{r.name}</b><div className="muted" style={{ fontSize: 12 }}>{r.address}</div></> },
@@ -351,6 +375,39 @@ export function Report() {
           <tbody>
             {data.map((r) => <tr key={r.account_id}><td>{r.site || '—'}</td><td>{r.unit ? `${r.unit} · ` : ''}{r.account}</td><td>{r.billing_mode === 'prepaid' ? 'Prepago' : 'Pospago'}</td><td>{r.sessions}</td><td className="kwh">{kwh(r.energy_wh)}</td><td style={{ textAlign: 'right' }}>{money(r.amount)}</td></tr>)}
             <tr><td colSpan={4}><b>Total</b></td><td className="kwh"><b>{kwh(totals.wh)}</b></td><td style={{ textAlign: 'right' }}><b>{money(totals.amount)}</b></td></tr>
+          </tbody>
+        </table></div></div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Liquidación a propietarios ----------
+export function OwnersReport() {
+  const now = new Date();
+  const [month, setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+  const { data } = useApi(`/reports/owners?month=${month}`);
+  const download = async () => {
+    const res = await api(`/reports/owners?month=${month}&format=csv`, { raw: true });
+    const url = URL.createObjectURL(await res.blob());
+    Object.assign(document.createElement('a'), { href: url, download: `propietarios-${month}.csv` }).click();
+    URL.revokeObjectURL(url);
+  };
+  const t = (data || []).reduce((a, r) => ({ amount: a.amount + r.amount, owner: a.owner + r.to_owner, margin: a.margin + r.margin }), { amount: 0, owner: 0, margin: 0 });
+  return (
+    <div>
+      <PageHeader title="Liquidación a propietarios" icon="building" desc="Lo cobrado en cada sitio, el costo de energía a devolver al dueño de la línea y el margen de Infratec"
+        actions={<button className="btn sec" onClick={download}><Icon name="download" size={16} />Descargar CSV</button>} />
+      <div className="row wrap" style={{ gap: 10, marginBottom: 12 }}><Field label="Mes"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} /></Field></div>
+      {!data ? <Loading rows={4} /> : (
+        <div className="card" style={{ padding: 0 }}><div className="tablewrap"><table className="table">
+          <thead><tr><th>Sitio</th><th>Propietario</th><th>Energía</th><th style={{ textAlign: 'right' }}>Cobrado</th><th style={{ textAlign: 'right' }}>A liquidar al propietario</th><th style={{ textAlign: 'right' }}>Margen</th></tr></thead>
+          <tbody>
+            {data.map((r) => (
+              <tr key={r.site_id}><td>{r.site}</td><td>{r.line_owner === 'cliente' ? r.owner_name || 'Cliente' : <span className="muted">Suministro de Infratec</span>}</td>
+                <td className="kwh">{kwh(r.energy_wh)}</td><td style={{ textAlign: 'right' }}>{money(r.amount)}</td><td style={{ textAlign: 'right' }}>{money(r.to_owner)}</td><td style={{ textAlign: 'right' }}>{money(r.margin)}</td></tr>
+            ))}
+            <tr><td colSpan={3}><b>Total</b></td><td style={{ textAlign: 'right' }}><b>{money(t.amount)}</b></td><td style={{ textAlign: 'right' }}><b>{money(t.owner)}</b></td><td style={{ textAlign: 'right' }}><b>{money(t.margin)}</b></td></tr>
           </tbody>
         </table></div></div>
       )}
