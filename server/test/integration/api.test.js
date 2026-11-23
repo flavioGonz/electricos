@@ -20,6 +20,7 @@ before(async () => {
   if (skip) return;
   process.env.DATABASE_URL = url;
   process.env.JWT_SECRET = 'prueba';
+  process.env.AUTH_RATE_LIMIT = '1000'; // las pruebas hacen muchos ingresos seguidos; el límite se prueba aparte
   process.env.ADMIN_EMAIL = ADMIN.email;
   process.env.ADMIN_PASSWORD = ADMIN.password;
   db = await import('../../src/db.js');
@@ -156,4 +157,57 @@ test('gestión de usuarios de la app: contraseña, cierre de sesiones y ficha', 
   assert.ok(Array.isArray((await call('GET', `/app-users/${u.body.id}/sessions`, { token: adminToken })).body));
   const act = await call('GET', `/app-users/${u.body.id}/activity`, { token: adminToken });
   assert.ok(act.body.length >= 1);
+});
+
+// ---------- Auditoría de seguridad ----------
+const raw = (method, path, { token, body, ip = '127.0.0.1', headers = {} } = {}) =>
+  app.inject({ method, url: `/api${path}`, remoteAddress: ip, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers }, payload: body });
+
+test('cabeceras de seguridad en la API', { skip }, async () => {
+  const r = await raw('GET', '/health');
+  assert.match(r.headers['strict-transport-security'], /max-age=/);
+  assert.equal(r.headers['x-frame-options'], 'DENY');
+  assert.equal(r.headers['x-content-type-options'], 'nosniff');
+  assert.match(r.headers['content-security-policy'], /frame-ancestors 'none'/);
+  assert.equal(r.headers['cache-control'], 'no-store');
+});
+
+test('X-Forwarded-For solo se acepta del proxy', { skip }, async () => {
+  const fake = await raw('POST', '/internal/backup', { ip: '203.0.113.7', headers: { 'x-forwarded-for': '192.168.99.3' }, body: { ok: true } });
+  assert.equal(fake.statusCode, 403, 'un cliente de afuera no puede hacerse pasar por pve02');
+});
+
+test('límite de intentos de ingreso por IP', { skip }, async (t) => {
+  process.env.AUTH_RATE_LIMIT = '10';
+  t.after(() => { process.env.AUTH_RATE_LIMIT = '1000'; });
+  const codes = [];
+  for (let i = 0; i < 12; i++) codes.push((await raw('POST', '/auth/login', { ip: '203.0.113.9', body: { email: `nadie${i}@prueba.uy`, password: 'x' } })).statusCode);
+  assert.equal(codes[0], 401);
+  assert.equal(codes.at(-1), 429);
+  assert.equal((await raw('POST', '/auth/login', { ip: '203.0.113.10', body: { email: 'nadie@prueba.uy', password: 'x' } })).statusCode, 401, 'otra IP no queda limitada');
+});
+
+test('restablecer la contraseña cierra las sesiones del panel', { skip }, async () => {
+  const u = await call('POST', '/admins', { token: adminToken, body: { email: 'op@prueba.uy', name: 'Op', role: 'operador', password: 'operador-123' } });
+  const tok = (await login('op@prueba.uy', 'operador-123')).token;
+  assert.equal((await call('GET', '/me', { token: tok })).status, 200);
+  await new Promise((r) => setTimeout(r, 1100));
+  assert.equal((await call('POST', `/admins/${u.body.id}/reset-password`, { token: adminToken })).status, 200);
+  assert.equal((await call('GET', '/me', { token: tok })).status, 401);
+});
+
+test('contraseña OCPP por cargador: no se expone el hash', { skip }, async () => {
+  assert.equal((await call('POST', '/chargers', { token: adminToken, body: { id: 'SEG-1', approved: true } })).status, 201);
+  const r = await call('POST', '/chargers/SEG-1/ocpp-password', { token: adminToken, body: { manual: true } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.password.length, 24);
+  const c = (await call('GET', '/chargers', { token: adminToken })).body.find((x) => x.id === 'SEG-1');
+  assert.equal(c.ocpp_password, true);
+  assert.equal(c.ocpp_password_hash, undefined);
+});
+
+test('CSV de auditoría sin fórmulas', { skip }, async () => {
+  await raw('POST', '/auth/login', { ip: '203.0.113.20', body: { email: '=HYPERLINK("http://x")', password: 'x' } });
+  const r = await raw('GET', '/audit?format=csv', { token: adminToken });
+  assert.ok(!/;=HYPERLINK/.test(r.body) && !/;"=HYPERLINK/.test(r.body));
 });

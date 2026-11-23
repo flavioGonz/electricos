@@ -1,11 +1,11 @@
 // API de la app del usuario: registro, QR del cargador, iniciar/detener, consumo, reservas y pagos.
 import { tgLinkCode } from './telegram.js';
 import { getSetting } from './settings.js';
-import { lockMessage, registerFailure, clearFailures } from './security.js';
+import { lockMessage, registerFailure, clearFailures, limitHook } from './security.js';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
 import { one, many, q, tx } from './db.js';
-import { clients, events, accountBalance } from './ocpp.js';
+import { clients, events, accountBalance, authorizeTag } from './ocpp.js';
 import { rateAt } from './billing.js';
 import { audit } from './audit.js';
 
@@ -60,10 +60,23 @@ export async function settlePayment(paymentId, mp) {
     const p = (await db.query('SELECT * FROM payments WHERE id=$1 FOR UPDATE', [paymentId])).rows[0];
     if (!p) return null;
     const status = mp.status === 'approved' ? 'approved' : ['rejected', 'cancelled', 'refunded', 'charged_back'].includes(mp.status) ? 'rejected' : 'pending';
-    if (p.status === 'approved') return p; // ya acreditado
+    // Un pago ya acreditado que después se devuelve o tiene contracargo: se revierte la recarga (una sola vez)
+    if (p.status === 'approved') {
+      if (['refunded', 'charged_back'].includes(mp.status) && !p.reversal_movement_id && String(mp.id) === String(p.external_id)) {
+        const credited = p.movement_id ? (await db.query('SELECT amount FROM movements WHERE id=$1', [p.movement_id])).rows[0]?.amount : p.amount;
+        const rev = (await db.query(`INSERT INTO movements(account_id, kind, amount, description) VALUES ($1,'adjustment',$2,$3) RETURNING id`, [
+          p.account_id, -Number(credited || 0), `${mp.status === 'charged_back' ? 'Contracargo' : 'Devolución'} Mercado Pago #${mp.id}`,
+        ])).rows[0].id;
+        return (await db.query(`UPDATE payments SET status='refunded', reversal_movement_id=$2, updated_at=now() WHERE id=$1 RETURNING *`, [p.id, rev])).rows[0];
+      }
+      return p; // ya acreditado
+    }
+    if (p.status === 'refunded') return p;
     let movementId = null;
     if (status === 'approved') {
-      const amount = Number(mp.transaction_amount ?? p.amount);
+      // Se acredita lo que se cobró, nunca más de lo pedido, y solo en pesos
+      if (mp.currency_id && mp.currency_id !== (p.currency || 'UYU')) throw Object.assign(new Error(`moneda inesperada en el pago ${mp.id}`), { statusCode: 400 });
+      const amount = Math.min(Number(mp.transaction_amount ?? p.amount), Number(p.amount));
       movementId = (
         await db.query(`INSERT INTO movements(account_id, kind, amount, description) VALUES ($1,'payment',$2,$3) RETURNING id`, [
           p.account_id,
@@ -86,10 +99,11 @@ export async function settlePayment(paymentId, mp) {
 export default async function appApi(app) {
   app.get('/config', async () => ({ payments: !!MP_TOKEN() }));
 
-  app.post('/register', async (req, reply) => {
+  app.post('/register', { onRequest: limitHook({ max: 5, windowMs: 10 * 60_000 }) }, async (req, reply) => {
     const { name, email, phone, password, inviteCode } = req.body || {};
     if (!name || !email || !password) throw new HttpError(400, 'Completá nombre, email y contraseña');
-    if (String(password).length < 6) throw new HttpError(400, 'La contraseña debe tener al menos 6 caracteres');
+    if (String(password).length < 8) throw new HttpError(400, 'La contraseña debe tener al menos 8 caracteres');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim()) || String(email).length > 200 || String(name).length > 120) throw new HttpError(400, 'Revisá el nombre y el email');
     const mail = String(email).trim().toLowerCase();
     if (await one('SELECT 1 FROM app_users WHERE email=$1', [mail])) throw new HttpError(409, 'Ya existe un usuario con ese email');
     const user = await tx(async (db) => {
@@ -118,7 +132,7 @@ export default async function appApi(app) {
     return reply.code(201).send({ token: app.jwt.sign({ sub: user.id, acc: user.account_id, role: 'user' }, { expiresIn: '90d' }), user });
   });
 
-  app.post('/login', async (req) => {
+  app.post('/login', { onRequest: limitHook({ max: 10, windowMs: 60_000 }) }, async (req) => {
     const { email, password } = req.body || {};
     const u = await one('SELECT * FROM app_users WHERE email=$1 AND active', [String(email || '').trim().toLowerCase()]);
     const locked = lockMessage(u);
@@ -157,7 +171,7 @@ export default async function appApi(app) {
     if (!res.ok) return { ok: false };
     const mp = await res.json();
     const pid = Number(mp.external_reference);
-    if (Number.isInteger(pid)) {
+    if (Number.isInteger(pid) && pid > 0) {
       const settled = await settlePayment(pid, mp);
       if (settled) events.emit('change', { type: 'payment', accountId: settled.account_id });
     }
@@ -236,6 +250,12 @@ export default async function appApi(app) {
       const client = clients.get(req.params.id);
       if (!client) throw new HttpError(409, 'El cargador no está conectado en este momento');
       const tag = appTag(req.appUser.id);
+      // Mismas reglas que con la tarjeta (sitio, cargador exclusivo, reserva, saldo) antes de mandarle la orden al equipo
+      const { info } = await authorizeTag(req.params.id, tag);
+      if (info.status !== 'Accepted') {
+        const why = { Blocked: 'Tu cuenta no tiene saldo o está bloqueada', Expired: 'Tu acceso venció', ConcurrentTx: 'Ya tenés una carga en otro cargador' }[info.status];
+        throw new HttpError(403, why || 'No podés cargar en este cargador');
+      }
       const r = await client.call('RemoteStartTransaction', { idTag: tag, connectorId: Number(req.body?.connectorId || 1) });
       if (r.status !== 'Accepted') throw new HttpError(409, 'El cargador rechazó el inicio. ¿Está enchufado el auto?');
       await audit({ actorType: 'app', actorId: req.appUser.id, actorName: `usuario ${req.appUser.id}`, action: 'comando', entity: 'chargers', entityId: req.params.id, summary: `inició una carga desde la app en ${req.params.id}`, ip: req.ip });

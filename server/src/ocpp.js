@@ -5,6 +5,10 @@ import { EventEmitter } from 'node:events';
 import { one, many, q, tx } from './db.js';
 import { priceSession, rateAt } from './billing.js';
 import { rebalance } from './power.js';
+import bcrypt from 'bcryptjs';
+import { safeEqual } from './security.js';
+
+let insecureWarned = false;
 
 export const events = new EventEmitter(); // eventos para el panel en vivo (SSE)
 events.setMaxListeners(100);
@@ -215,12 +219,33 @@ export function createOcppServer({ log = console } = {}) {
     try {
       const id = handshake.identity;
       if (!/^[A-Za-z0-9._:-]{1,64}$/.test(id)) return reject(400, 'identidad inválida');
-      const expected = process.env.OCPP_PASSWORD;
-      if (expected) {
-        const given = handshake.password ? handshake.password.toString() : '';
-        if (given !== expected) return reject(401, 'credenciales inválidas');
+      // Autenticación (OCPP 1.6 Security Profile 1/2, HTTP Basic):
+      //  - si el cargador tiene contraseña propia, se exige esa;
+      //  - si no, y hay OCPP_PASSWORD, se exige la compartida;
+      //  - sin ninguna de las dos se acepta (modo inseguro, solo para la puesta en marcha).
+      const given = handshake.password ? handshake.password.toString() : '';
+      const known = await one('SELECT id, ocpp_password_hash FROM chargers WHERE id=$1', [id]);
+      if (known?.ocpp_password_hash) {
+        if (!given || !(await bcrypt.compare(given, known.ocpp_password_hash))) {
+          log.warn?.(`OCPP: contraseña incorrecta para ${id} desde ${handshake.remoteAddress}`);
+          return reject(401, 'credenciales inválidas');
+        }
+      } else if (process.env.OCPP_PASSWORD) {
+        if (!safeEqual(given, process.env.OCPP_PASSWORD)) {
+          log.warn?.(`OCPP: contraseña incorrecta para ${id} desde ${handshake.remoteAddress}`);
+          return reject(401, 'credenciales inválidas');
+        }
+      } else if (!insecureWarned) {
+        insecureWarned = true;
+        log.warn?.('OCPP sin contraseña: cualquiera puede conectarse como un cargador. Definí OCPP_PASSWORD o una contraseña por cargador.');
       }
-      await q('INSERT INTO chargers(id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [id]);
+      if (!known) {
+        // Alta automática de cargadores nuevos (quedan pendientes de aprobación). Se puede apagar con OCPP_AUTO_REGISTER=0.
+        if (process.env.OCPP_AUTO_REGISTER === '0') return reject(404, 'cargador no registrado');
+        const pending = await one('SELECT count(*)::int AS n FROM chargers WHERE NOT approved');
+        if (pending.n >= 50) return reject(503, 'demasiados cargadores pendientes de aprobación');
+        await q('INSERT INTO chargers(id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [id]);
+      }
       accept({ id });
     } catch (err) {
       log.error?.(err);

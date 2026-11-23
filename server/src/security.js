@@ -81,3 +81,29 @@ export async function registerFailure(table, id) {
 export async function clearFailures(table, id) {
   if (TABLES.has(table)) await q(`UPDATE ${table} SET failed_attempts=0, locked_until=NULL WHERE id=$1`, [id]);
 }
+
+// ---------- Límite de pedidos por IP (ingreso, registro, códigos) ----------
+// En memoria: alcanza para una sola instancia. Ventana fija por clave (ruta + IP).
+const hits = new Map();
+export function rateLimit(key, { max = 10, windowMs = 60_000 } = {}, now = Date.now()) {
+  let h = hits.get(key);
+  if (!h || h.reset <= now) { h = { n: 0, reset: now + windowMs }; hits.set(key, h); }
+  h.n++;
+  if (hits.size > 50_000) for (const [k, v] of hits) if (v.reset <= now) hits.delete(k);
+  return h.n > max ? Math.ceil((h.reset - now) / 1000) : 0;
+}
+/** Hook de Fastify: corta con 429 cuando una IP supera el límite en esa ruta. */
+export const limitHook = (opts) => async (req, reply) => {
+  const wait = rateLimit(`${req.routeOptions.url}|${req.ip}`, { ...opts, max: Number(process.env.AUTH_RATE_LIMIT) || opts?.max || 10 });
+  if (wait) {
+    reply.header('Retry-After', String(wait));
+    throw Object.assign(new Error('Demasiados intentos seguidos. Esperá un minuto y probá de nuevo.'), { statusCode: 429 });
+  }
+};
+
+/** Comparación de textos en tiempo constante (contraseñas compartidas). */
+export function safeEqual(a, b) {
+  const x = Buffer.from(String(a ?? ''));
+  const y = Buffer.from(String(b ?? ''));
+  return x.length === y.length && timingSafeEqual(x, y);
+}
