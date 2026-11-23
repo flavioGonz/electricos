@@ -7,6 +7,7 @@ import { audit, describe } from './audit.js';
 import { getSetting, getSettingPublic, setSetting } from './settings.js';
 import { siteStatus } from './power.js';
 import { generateDrafts, issue, cancelInvoice } from './invoices.js';
+import { consumo } from './consumo.js';
 import { newSecret, verifyTotp, otpauthUri, sealSecret, openSecret, issueWaCode, checkWaCode, lockMessage, registerFailure, clearFailures } from './security.js';
 import { sendWhatsApp, sendEmail, notifyAdmins, recentNotifications } from './notify.js';
 import { randomBytes } from 'node:crypto';
@@ -363,6 +364,9 @@ export default async function api(app) {
       return issue(Number(req.params.id), m);
     });
     priv.post('/invoices/:id/cancel', async (req) => cancelInvoice(Number(req.params.id)));
+
+    // ---------- Consumo (gráficas) ----------
+    priv.get('/consumo', async (req) => consumo({ month: req.query.month, siteId: req.query.siteId ? Number(req.query.siteId) : null, scope: scopeOf(req) }));
 
     // ---------- Potencia por sitio ----------
     priv.get('/power', async (req) => {

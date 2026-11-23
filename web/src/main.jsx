@@ -12,12 +12,14 @@ import LoginScene from './components/LoginScene.jsx';
 import { AdminUsers, AppUsers, ChargerModels, Audit, Notifications, TwoFactor } from './settings.jsx';
 import { Tooltip } from 'react-tooltip';
 import { Invoices } from './billing.jsx';
+import { Consumo } from './consumo.jsx';
 import { Dashboard, Chargers, Tariffs, Sites, Accounts, Cards, Sessions, Report, OwnersReport, Alerts, Reservations, Payments } from './pages.jsx';
 
 const NAV = [
   { to: '/', label: 'Panel', icon: 'home', section: 'Operación', page: Dashboard, edificio: true },
   { to: '/cargadores', label: 'Cargadores', icon: 'plug', section: 'Operación', page: Chargers },
   { to: '/sesiones', label: 'Sesiones', icon: 'bolt', section: 'Operación', page: Sessions, edificio: true },
+  { to: '/consumo', label: 'Consumo', icon: 'power', section: 'Operación', page: Consumo, edificio: true },
   { to: '/alertas', label: 'Alertas', icon: 'bell', section: 'Operación', page: Alerts },
   { to: '/reservas', label: 'Reservas', icon: 'calendar', section: 'Operación', page: Reservations },
   { to: '/cuentas', label: 'Cuentas', icon: 'users', section: 'Usuarios', page: Accounts, edificio: true },
