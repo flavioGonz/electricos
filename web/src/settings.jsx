@@ -11,9 +11,10 @@ const ROLES = [
   { value: 'admin', label: 'Administrador', hint: 'Todo, incluidos usuarios, tarifas y auditoría' },
   { value: 'operador', label: 'Operador', hint: 'Opera cargadores, cuentas y tarjetas; no borra ni toca tarifas' },
   { value: 'lectura', label: 'Solo lectura', hint: 'Ve todo, no cambia nada' },
+  { value: 'edificio', label: 'Administración de edificio', hint: 'Solo ve el consumo, las cuentas y la liquidación de sus edificios' },
 ];
 const roleLabel = (r) => ROLES.find((x) => x.value === r)?.label || r;
-const ROLE_TONE = { admin: 'info', operador: 'ok', lectura: 'gris' };
+const ROLE_TONE = { admin: 'info', operador: 'ok', lectura: 'gris', edificio: 'warn' };
 
 /** Muestra una contraseña temporal una sola vez, con botón para copiarla. */
 function TempPassword({ who, password, onClose }) {
@@ -29,6 +30,7 @@ function TempPassword({ who, password, onClose }) {
 
 // ---------- Usuarios del panel ----------
 export function AdminUsers({ me }) {
+  const sites = useApi('/sites').data || [];
   const [temp, setTemp] = useState(null);
   const [pass, setPass] = useState(null);
   const reset = (row) => act(() => api(`/admins/${row.id}/reset-password`, { method: 'POST' })).then((r) => setTemp({ who: row.name, password: r.temp_password })).catch(() => {});
@@ -58,13 +60,14 @@ export function AdminUsers({ me }) {
           { name: 'name', label: 'Nombre', required: true, placeholder: 'Nombre y apellido' },
           { name: 'email', label: 'Email', type: 'email', required: true, createOnly: true, placeholder: 'nombre@empresa.com' },
           { name: 'phone', label: 'Teléfono', placeholder: '099 123 456', half: true },
-          { name: 'role', label: 'Rol', type: 'select', required: true, half: true, options: ROLES.map(({ value, label }) => ({ value, label })), help: 'Administrador: todo. Operador: opera, no borra ni cambia tarifas. Solo lectura: ve todo.' },
+          { name: 'role', label: 'Rol', type: 'select', required: true, half: true, options: ROLES.map(({ value, label }) => ({ value, label })), help: 'Administrador: todo. Operador: opera, no borra ni cambia tarifas. Solo lectura: ve todo. Administración de edificio: solo ve lo suyo.' },
+          { name: 'site_ids', label: 'Edificios que puede ver', type: 'chips', required: true, show: (v) => v.role === 'edificio', options: () => sites.map((s) => ({ value: s.id, label: s.name })), help: 'Ve el consumo, las cuentas, la liquidación y los comprobantes de estos sitios. No puede cambiar nada.' },
           { name: 'password', label: 'Contraseña', type: 'password', createOnly: true, placeholder: 'Vacío para generar una temporal', help: 'Mínimo 8 caracteres. Si la dejás vacía se genera una y te la mostramos.' },
           { name: 'active', label: 'Activo', type: 'checkbox', help: 'Puede entrar al panel' },
         ]}
         columns={[
           { label: 'Usuario', render: (r) => <><b>{r.name}</b>{r.id === me?.id && <span className="subtle"> · vos</span>}<div className="subtle">{r.email}</div></> },
-          { label: 'Rol', render: (r) => <span className={`badge mini ${ROLE_TONE[r.role]}`}><span className="dot" />{roleLabel(r.role)}</span> },
+          { label: 'Rol', render: (r) => <><span className={`badge mini ${ROLE_TONE[r.role]}`}><span className="dot" />{roleLabel(r.role)}</span>{r.role === 'edificio' && <div className="subtle" style={{ fontSize: 12, marginTop: 3 }}>{(r.site_ids || []).map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join(', ')}</div>}</> },
           { label: 'Último ingreso', render: (r) => (r.last_login_at ? <span data-tip={dt(r.last_login_at)}>{ago(r.last_login_at)}</span> : <span className="subtle">Nunca</span>) },
           { label: 'Doble factor', render: (r) => (r.totp_enabled ? <span className="badge mini ok"><span className="dot" />Activo</span> : <span className="subtle">No</span>) },
           { label: 'Estado', render: (r) => (r.locked_until ? <span className="badge mini falla" data-tip={`Bloqueado hasta ${dt(r.locked_until)}`}><span className="dot" />Bloqueado</span> : r.active ? <span className="badge mini ok"><span className="dot" />Activo</span> : <span className="badge mini gris"><span className="dot" />Deshabilitado</span>) },

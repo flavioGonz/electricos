@@ -60,10 +60,10 @@ export default function CrudPage({ title, singular, desc, icon, path, keyField =
 
   return (
     <div className="page">
-      <PageHeader title={title} desc={desc} actions={<>{extraActions}<button className="btn" onClick={() => open(null)}><Icon name="plus" size={16} />Nuevo</button></>} />
+      <PageHeader title={title} desc={desc} actions={<>{extraActions}{!readOnly && <button className="btn" onClick={() => open(null)}><Icon name="plus" size={16} />Nuevo</button>}</>} />
       {error && <div className="err-box">{error}</div>}
       {!data ? <Loading rows={5} /> : data.length === 0 ? (
-        <div className="card"><Empty icon={icon} title={emptyTitle || `Todavía no hay ${title.toLowerCase()}`} action={<button className="btn" onClick={() => open(null)}><Icon name="plus" size={16} />Crear {name}</button>}>{emptyText}</Empty></div>
+        <div className="card"><Empty icon={icon} title={emptyTitle || `Todavía no hay ${title.toLowerCase()}`} action={!readOnly && <button className="btn" onClick={() => open(null)}><Icon name="plus" size={16} />Crear {name}</button>}>{emptyText}</Empty></div>
       ) : (
         <div className="card flush"><div className="tablewrap"><table className="table">
           <thead><tr>{columns.map((c) => <th key={c.label} className={c.right ? 'right' : ''}>{c.label}</th>)}<th /></tr></thead>
@@ -73,8 +73,8 @@ export default function CrudPage({ title, singular, desc, icon, path, keyField =
                 {columns.map((c) => <td key={c.label} className={c.right ? 'right' : ''}>{c.render(row)}</td>)}
                 <td className="actions">
                   {rowActions?.(row, reload)}
-                  <button className="btn ghost icon sm" aria-label="Editar" data-tip="Editar" onClick={() => open(row)}><Icon name="edit" size={15} /></button>
-                  {canDelete(row) && <button className="btn ghost icon sm" aria-label="Eliminar" data-tip="Eliminar" onClick={() => setDel(row)}><Icon name="trash" size={15} /></button>}
+                  {!readOnly && <button className="btn ghost icon sm" aria-label="Editar" data-tip="Editar" onClick={() => open(row)}><Icon name="edit" size={15} /></button>}
+                  {!readOnly && canDelete(row) && <button className="btn ghost icon sm" aria-label="Eliminar" data-tip="Eliminar" onClick={() => setDel(row)}><Icon name="trash" size={15} /></button>}
                 </td>
               </tr>
             ))}
@@ -96,6 +96,15 @@ export default function CrudPage({ title, singular, desc, icon, path, keyField =
                 <Field key={f.name} className={f.half ? '' : 'full'} label={f.label + (f.required ? '' : ' (opcional)')} hint={f.help}>
                   {f.type === 'textarea' ? (
                     <textarea rows={f.rows || 6} className={f.mono ? 'mono' : ''} value={typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : v} placeholder={f.placeholder} onChange={(e) => set(f.name, e.target.value)} />
+                  ) : f.type === 'chips' ? (
+                    <div className="chips">
+                      {(opts || []).map((o) => {
+                        const on = (v || []).map(Number).includes(Number(o.value));
+                        return <button type="button" key={o.value} className={'chip' + (on ? ' on' : '')} aria-pressed={on}
+                          onClick={() => set(f.name, on ? (v || []).filter((x) => Number(x) !== Number(o.value)) : [...(v || []), Number(o.value)])}>{on && <Icon name="check" size={13} />}{o.label}</button>;
+                      })}
+                      {!(opts || []).length && <span className="subtle">No hay opciones todavía.</span>}
+                    </div>
                   ) : f.type === 'select' ? (
                     <select value={v ?? ''} onChange={(e) => set(f.name, e.target.value)}>
                       {!f.required && <option value="">—</option>}

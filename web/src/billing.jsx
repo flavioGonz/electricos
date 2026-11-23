@@ -22,7 +22,7 @@ export function Invoices({ me }) {
   const { data, reload } = useApi(`/invoices?${qs}`);
   const settings = useApi('/settings');
   const cfg = settings.data?.facturacion;
-  const canWrite = me?.level !== 'lectura';
+  const canWrite = !['lectura', 'edificio'].includes(me?.level);
   const live = (data || []).filter((i) => i.status !== 'anulada');
   const t = useMemo(() => live.reduce((a, i) => ({ total: a.total + Number(i.total), iva: a.iva + Number(i.iva), pend: a.pend + (i.status === 'emitida' ? 0 : 1) }), { total: 0, iva: 0, pend: 0 }), [data]);
   const generate = () => act(() => api('/invoices/generate', { method: 'POST', body: { month, siteId: siteId || null } }), (r) => (r.created ? `${r.created} borradores creados` : 'No hay cuentas nuevas para facturar'))

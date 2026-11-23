@@ -15,16 +15,16 @@ import { Invoices } from './billing.jsx';
 import { Dashboard, Chargers, Tariffs, Sites, Accounts, Cards, Sessions, Report, OwnersReport, Alerts, Reservations, Payments } from './pages.jsx';
 
 const NAV = [
-  { to: '/', label: 'Panel', icon: 'home', section: 'Operación', page: Dashboard },
+  { to: '/', label: 'Panel', icon: 'home', section: 'Operación', page: Dashboard, edificio: true },
   { to: '/cargadores', label: 'Cargadores', icon: 'plug', section: 'Operación', page: Chargers },
-  { to: '/sesiones', label: 'Sesiones', icon: 'bolt', section: 'Operación', page: Sessions },
+  { to: '/sesiones', label: 'Sesiones', icon: 'bolt', section: 'Operación', page: Sessions, edificio: true },
   { to: '/alertas', label: 'Alertas', icon: 'bell', section: 'Operación', page: Alerts },
   { to: '/reservas', label: 'Reservas', icon: 'calendar', section: 'Operación', page: Reservations },
-  { to: '/cuentas', label: 'Cuentas', icon: 'users', section: 'Usuarios', page: Accounts },
+  { to: '/cuentas', label: 'Cuentas', icon: 'users', section: 'Usuarios', page: Accounts, edificio: true },
   { to: '/tarjetas', label: 'Tarjetas', icon: 'card', section: 'Usuarios', page: Cards },
-  { to: '/liquidacion', label: 'Liquidación por cuenta', icon: 'file', section: 'Cobro', page: Report },
-  { to: '/propietarios', label: 'Liquidación a propietarios', icon: 'building', section: 'Cobro', page: OwnersReport },
-  { to: '/facturacion', label: 'Facturación', icon: 'ticket', section: 'Cobro', page: Invoices },
+  { to: '/liquidacion', label: 'Liquidación por cuenta', icon: 'file', section: 'Cobro', page: Report, edificio: true },
+  { to: '/propietarios', label: 'Liquidación a propietarios', icon: 'building', section: 'Cobro', page: OwnersReport, edificio: true },
+  { to: '/facturacion', label: 'Facturación', icon: 'ticket', section: 'Cobro', page: Invoices, edificio: true },
   { to: '/pagos', label: 'Pagos online', icon: 'dollar', section: 'Cobro', page: Payments },
   { to: '/tarifas', label: 'Tarifas', icon: 'clock', section: 'Cobro', page: Tariffs },
   { to: '/sitios', label: 'Sitios', icon: 'pin', section: 'Configuración', page: Sites },
@@ -128,7 +128,7 @@ function Admin({ me, onLogout }) {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
   const go = (to) => { window.history.pushState({}, '', to); setPath(to); window.scrollTo(0, 0); };
-  const allowed = NAV.filter((n) => !n.roles || n.roles.includes(me.level || 'admin'));
+  const allowed = me.level === 'edificio' ? NAV.filter((n) => n.edificio) : NAV.filter((n) => !n.roles || n.roles.includes(me.level || 'admin'));
   const nav = allowed.map((n) => (n.to === '/alertas' && dash?.alerts_open ? { ...n, badge: dash.alerts_open } : n));
   const item = allowed.find((n) => n.to === path) || allowed[0];
   const Page = item.page;

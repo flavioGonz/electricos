@@ -42,8 +42,17 @@ async function update(table, keyCol, key, data) {
   return row;
 }
 
-function crud(app, { path, table, key = 'id', fields, list, transform = (d) => d }) {
-  app.get(path, async () => many(list || `SELECT * FROM ${table} ORDER BY ${key}`));
+/** Sitios que puede ver el usuario: null = todos; un array = solo esos (administración de edificio). */
+export const scopeOf = (req) => (req.admin?.role === 'edificio' ? (req.admin.site_ids || []).map(Number) : null);
+
+function crud(app, { path, table, key = 'id', fields, list, transform = (d) => d, scopeCol }) {
+  app.get(path, async (req) => {
+    const sql = list || `SELECT * FROM ${table} ORDER BY ${key}`;
+    const sc = scopeOf(req);
+    if (!sc) return many(sql);
+    if (!scopeCol) throw new HttpError(403, 'no tenés acceso a esta sección');
+    return many(`SELECT * FROM (${sql}) z WHERE z.${scopeCol} = ANY($1::int[])`, [sc]);
+  });
   app.post(path, async (req, reply) => reply.code(201).send(await insert(table, transform(pick(req.body, fields)))));
   app.patch(`${path}/:key`, async (req) => update(table, key, req.params.key, transform(pick(req.body, fields))));
   app.delete(`${path}/:key`, async (req, reply) => {
@@ -83,6 +92,10 @@ export default async function api(app) {
   });
 
   app.get('/health', async () => ({ ok: true, chargersConnected: clients.size }));
+
+  // Lo único que ve un usuario de administración de edificio (siempre filtrado por sus sitios)
+  const EDIFICIO_GET = new Set(['/me', '/dashboard', '/sessions', '/sites', '/accounts', '/accounts/:id/movements', '/reports/monthly', '/reports/owners',
+    '/invoices', '/invoices/:id', '/power', '/events', '/consumo']);
 
   // ---------- Ingreso al panel: contraseña, doble factor y bloqueo por intentos ----------
   const finishLogin = async (admin, req, how = '') => {
@@ -165,10 +178,16 @@ export default async function api(app) {
         throw new HttpError(401, 'sesión vencida o inválida');
       }
       if (req.user.role !== 'admin') throw new HttpError(401, 'sesión vencida o inválida');
-      const me = await one('SELECT id, email, name, role, active FROM admins WHERE id=$1', [req.user.sub]);
+      const me = await one('SELECT id, email, name, role, active, site_ids FROM admins WHERE id=$1', [req.user.sub]);
       if (!me || !me.active) throw new HttpError(401, 'tu usuario fue deshabilitado');
       req.admin = me;
       const url = req.routeOptions.url || '';
+      if (me.role === 'edificio') {
+        const own = url === '/api/me/password' || url.startsWith('/api/me/2fa');
+        if (own) return;
+        if (req.method !== 'GET' || !EDIFICIO_GET.has(url.replace(/^\/api/, ''))) throw new HttpError(403, 'tu usuario solo puede ver el consumo y la liquidación de tu edificio');
+        return;
+      }
       if (req.method === 'GET' || url === '/api/me/password' || url.startsWith('/api/me/2fa')) return;
       if (me.role === 'lectura') throw new HttpError(403, 'tu usuario es de solo lectura');
       if (me.role === 'operador' && (req.method === 'DELETE' || /^\/api\/(admins|charger-models|tariffs)/.test(url)))
@@ -198,7 +217,9 @@ export default async function api(app) {
     priv.get('/me', async (req) => {
       const x = await one('SELECT totp_enabled, phone FROM admins WHERE id=$1', [req.admin.id]);
       const sec = await getSetting('seguridad').catch(() => ({}));
-      return { id: req.admin.id, email: req.admin.email, name: req.admin.name, level: req.admin.role, totp: x.totp_enabled, phone: x.phone, must_2fa: !!sec.require_2fa_admins && !x.totp_enabled };
+      const sc = scopeOf(req);
+      const sites = sc ? await many('SELECT id, name FROM sites WHERE id = ANY($1::int[]) ORDER BY name', [sc]) : undefined;
+      return { id: req.admin.id, email: req.admin.email, name: req.admin.name, level: req.admin.role, sites, totp: x.totp_enabled, phone: x.phone, must_2fa: !!sec.require_2fa_admins && !x.totp_enabled };
     });
     // Doble factor del propio usuario
     priv.post('/me/2fa/setup', async (req) => {
@@ -232,8 +253,9 @@ export default async function api(app) {
     });
 
     // ---------- Usuarios del panel ----------
-    const ROLES = ['admin', 'operador', 'lectura'];
-    priv.get('/admins', async () => many('SELECT id, email, name, phone, role, active, last_login_at, created_at, totp_enabled, CASE WHEN locked_until > now() THEN locked_until END AS locked_until FROM admins ORDER BY active DESC, name'));
+    const ROLES = ['admin', 'operador', 'lectura', 'edificio'];
+    const siteIds = (v) => (Array.isArray(v) ? v.map(Number).filter(Number.isInteger) : null);
+    priv.get('/admins', async () => many('SELECT id, email, name, phone, role, active, site_ids, last_login_at, created_at, totp_enabled, CASE WHEN locked_until > now() THEN locked_until END AS locked_until FROM admins ORDER BY active DESC, name'));
     priv.post('/admins/:id/unlock', async (req) => { await clearFailures('admins', Number(req.params.id)); return { ok: true }; });
     priv.post('/admins/:id/reset-2fa', async (req) => {
       const r = await one('UPDATE admins SET totp_secret=NULL, totp_pending=NULL, totp_enabled=false WHERE id=$1 RETURNING id', [req.params.id]);
@@ -244,9 +266,11 @@ export default async function api(app) {
       const { email, name, phone, role = 'operador', password } = req.body || {};
       if (!email || !name) throw new HttpError(400, 'completá nombre y email');
       if (!ROLES.includes(role)) throw new HttpError(400, 'rol inválido');
+      const sites = siteIds(req.body.site_ids);
+      if (role === 'edificio' && !sites?.length) throw new HttpError(400, 'elegí al menos un edificio para este usuario');
       const pass = password && String(password).length >= 8 ? String(password) : randomBytes(6).toString('base64url');
-      const row = await one('INSERT INTO admins(email, name, phone, role, password_hash) VALUES ($1,$2,$3,$4,$5) RETURNING id, email, name, phone, role, active',
-        [String(email).trim().toLowerCase(), name, phone || null, role, await bcrypt.hash(pass, 10)]);
+      const row = await one('INSERT INTO admins(email, name, phone, role, password_hash, site_ids) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, email, name, phone, role, active, site_ids',
+        [String(email).trim().toLowerCase(), name, phone || null, role, await bcrypt.hash(pass, 10), role === 'edificio' ? sites : null]);
       return reply.code(201).send({ ...row, temp_password: password ? undefined : pass });
     });
     const lastAdminGuard = async (id, next) => {
@@ -255,13 +279,16 @@ export default async function api(app) {
       if (!others.n) throw new HttpError(409, 'tiene que quedar al menos un administrador activo');
     };
     priv.patch('/admins/:id', async (req) => {
-      const data = pick(req.body, ['name', 'phone', 'role', 'active']);
+      const data = pick(req.body, ['name', 'phone', 'role', 'active', 'site_ids']);
       if (data.role && !ROLES.includes(data.role)) throw new HttpError(400, 'rol inválido');
+      if ('site_ids' in data) data.site_ids = siteIds(data.site_ids);
+      if (data.role === 'edificio' && !data.site_ids?.length) throw new HttpError(400, 'elegí al menos un edificio para este usuario');
+      if (data.role && data.role !== 'edificio') data.site_ids = null;
       const cur = await one('SELECT * FROM admins WHERE id=$1', [req.params.id]);
       if (!cur) throw notFound();
       if (cur.role === 'admin' && cur.active) await lastAdminGuard(cur.id, { role: data.role ?? cur.role, active: data.active ?? cur.active });
       const r = await update('admins', 'id', req.params.id, data);
-      return { id: r.id, email: r.email, name: r.name, phone: r.phone, role: r.role, active: r.active };
+      return { id: r.id, email: r.email, name: r.name, phone: r.phone, role: r.role, active: r.active, site_ids: r.site_ids };
     });
     priv.post('/admins/:id/reset-password', async (req) => {
       const pass = randomBytes(6).toString('base64url');
@@ -317,14 +344,16 @@ export default async function api(app) {
     // ---------- Facturación electrónica ----------
     priv.get('/invoices', async (req) => many(
       `SELECT i.*, a.name AS account, a.unit, s.name AS site FROM invoices i JOIN accounts a ON a.id=i.account_id LEFT JOIN sites s ON s.id=a.site_id
-        WHERE ($1::text IS NULL OR i.period=$1) AND ($2::int IS NULL OR a.site_id=$2) ORDER BY i.status='anulada', a.site_id, a.unit, a.name`,
-      [req.query.month || null, req.query.siteId ? Number(req.query.siteId) : null]));
+        WHERE ($1::text IS NULL OR i.period=$1) AND ($2::int IS NULL OR a.site_id=$2) AND ($3::int[] IS NULL OR a.site_id = ANY($3))
+        ORDER BY i.status='anulada', a.site_id, a.unit, a.name`,
+      [req.query.month || null, req.query.siteId ? Number(req.query.siteId) : null, scopeOf(req)]));
     priv.post('/invoices/generate', async (req) => {
       const r = await generateDrafts(req.body?.month, req.body?.siteId ? Number(req.body.siteId) : null);
       return { created: r.length };
     });
     priv.get('/invoices/:id', async (req) => {
-      const r = await one(`SELECT i.*, a.name AS account, a.unit, s.name AS site FROM invoices i JOIN accounts a ON a.id=i.account_id LEFT JOIN sites s ON s.id=a.site_id WHERE i.id=$1`, [Number(req.params.id)]);
+      const r = await one(`SELECT i.*, a.name AS account, a.unit, s.name AS site FROM invoices i JOIN accounts a ON a.id=i.account_id LEFT JOIN sites s ON s.id=a.site_id
+        WHERE i.id=$1 AND ($2::int[] IS NULL OR a.site_id = ANY($2))`, [Number(req.params.id), scopeOf(req)]);
       if (!r) throw notFound();
       return { ...r, emisor: await getSettingPublic('facturacion') };
     });
@@ -336,8 +365,8 @@ export default async function api(app) {
     priv.post('/invoices/:id/cancel', async (req) => cancelInvoice(Number(req.params.id)));
 
     // ---------- Potencia por sitio ----------
-    priv.get('/power', async () => {
-      const sites = await many('SELECT id FROM sites WHERE contracted_kw IS NOT NULL OR max_amps IS NOT NULL ORDER BY name');
+    priv.get('/power', async (req) => {
+      const sites = await many('SELECT id FROM sites WHERE (contracted_kw IS NOT NULL OR max_amps IS NOT NULL) AND ($1::int[] IS NULL OR id = ANY($1)) ORDER BY name', [scopeOf(req)]);
       return Promise.all(sites.map((x) => siteStatus(x.id)));
     });
     priv.post('/sites/:id/rebalance', async (req) => { await balanceSite(Number(req.params.id)); return siteStatus(Number(req.params.id)); });
@@ -401,7 +430,24 @@ export default async function api(app) {
       });
     });
 
-    priv.get('/dashboard', async () => {
+    priv.get('/dashboard', async (req) => {
+      const sc = scopeOf(req);
+      if (sc) {
+        return one(
+          `SELECT
+             (SELECT count(*) FROM chargers WHERE site_id = ANY($2)) AS chargers,
+             (SELECT count(*) FROM chargers WHERE connected AND site_id = ANY($2)) AS chargers_online,
+             0 AS chargers_pending,
+             (SELECT count(*) FROM sessions x JOIN chargers c ON c.id=x.charger_id WHERE x.status='active' AND c.site_id = ANY($2)) AS sessions_active,
+             (SELECT count(*) FROM accounts WHERE active AND site_id = ANY($2)) AS accounts,
+             (SELECT count(*) FROM cards k JOIN accounts a ON a.id=k.account_id WHERE k.status='active' AND k.app_user_id IS NULL AND a.site_id = ANY($2)) AS cards,
+             (SELECT count(*) FROM app_users u JOIN accounts a ON a.id=u.account_id WHERE u.active AND a.site_id = ANY($2)) AS app_users,
+             (SELECT count(*) FROM alerts l JOIN chargers c ON c.id=l.charger_id WHERE l.resolved_at IS NULL AND c.site_id = ANY($2)) AS alerts_open,
+             (SELECT COALESCE(SUM(x.energy_wh),0) FROM sessions x JOIN chargers c ON c.id=x.charger_id WHERE x.status='completed' AND c.site_id = ANY($2) AND x.started_at >= date_trunc('month', now() AT TIME ZONE $1) AT TIME ZONE $1) AS month_energy_wh,
+             (SELECT COALESCE(SUM(x.amount),0) FROM sessions x JOIN chargers c ON c.id=x.charger_id WHERE x.status='completed' AND c.site_id = ANY($2) AND x.started_at >= date_trunc('month', now() AT TIME ZONE $1) AT TIME ZONE $1) AS month_amount`,
+          [TZ, sc],
+        );
+      }
       return one(
         `SELECT
            (SELECT count(*) FROM chargers) AS chargers,
@@ -438,6 +484,7 @@ export default async function api(app) {
                (SELECT count(*) FROM chargers c WHERE c.site_id=s.id) AS chargers,
                (SELECT count(*) FROM accounts a WHERE a.site_id=s.id) AS accounts
              FROM sites s LEFT JOIN tariffs t ON t.id=s.tariff_id ORDER BY s.name`,
+      scopeCol: 'id',
     });
 
     crud(priv, {
@@ -448,6 +495,7 @@ export default async function api(app) {
                (SELECT COALESCE(SUM(amount),0) FROM movements m WHERE m.account_id=a.id) AS balance,
                (SELECT count(*) FROM cards k WHERE k.account_id=a.id) AS cards
              FROM accounts a LEFT JOIN sites s ON s.id=a.site_id ORDER BY s.name NULLS LAST, a.unit, a.name`,
+      scopeCol: 'site_id',
     });
 
     crud(priv, {
@@ -522,14 +570,17 @@ export default async function api(app) {
 
     priv.get('/sessions', async (req) => {
       const { accountId, chargerId, siteId, status, from, to, limit = 200 } = req.query;
-      return many(
+      const rows = await many(
         `SELECT x.*, a.name AS account_name, a.unit AS account_unit, c.name AS charger_name, s.name AS site_name
            FROM sessions x LEFT JOIN accounts a ON a.id=x.account_id JOIN chargers c ON c.id=x.charger_id LEFT JOIN sites s ON s.id=c.site_id
           WHERE ($1::int IS NULL OR x.account_id=$1) AND ($2::text IS NULL OR x.charger_id=$2) AND ($3::int IS NULL OR c.site_id=$3)
             AND ($4::text IS NULL OR x.status=$4) AND ($5::date IS NULL OR x.started_at >= $5) AND ($6::date IS NULL OR x.started_at < $6)
+            AND ($8::int[] IS NULL OR c.site_id = ANY($8))
           ORDER BY x.started_at DESC LIMIT $7`,
-        [accountId || null, chargerId || null, siteId || null, status || null, from || null, to || null, Math.min(Number(limit) || 200, 2000)],
+        [accountId || null, chargerId || null, siteId || null, status || null, from || null, to || null, Math.min(Number(limit) || 200, 2000), scopeOf(req)],
       );
+      if (scopeOf(req)) for (const r of rows) { delete r.margin; delete r.energy_cost; }
+      return rows;
     });
 
     // Código para que los residentes se unan a la cuenta desde la app
@@ -561,10 +612,14 @@ export default async function api(app) {
       many(`SELECT p.*, a.name AS account_name FROM payments p JOIN accounts a ON a.id=p.account_id ORDER BY p.created_at DESC LIMIT 300`),
     );
 
-    priv.get('/accounts/:id/movements', async (req) => ({
+    priv.get('/accounts/:id/movements', async (req) => {
+      const sc = scopeOf(req);
+      if (sc && !(await one('SELECT 1 FROM accounts WHERE id=$1 AND site_id = ANY($2)', [req.params.id, sc]))) throw notFound();
+      return {
       balance: await accountBalance(req.params.id),
       movements: await many('SELECT * FROM movements WHERE account_id=$1 ORDER BY created_at DESC LIMIT 500', [req.params.id]),
-    }));
+      };
+    });
     priv.post('/accounts/:id/movements', async (req, reply) => {
       const { kind, amount, description = '' } = req.body || {};
       if (!['payment', 'adjustment'].includes(kind)) throw new HttpError(400, 'kind debe ser payment o adjustment');
@@ -584,13 +639,15 @@ export default async function api(app) {
            LEFT JOIN chargers c ON c.site_id=s.id
            LEFT JOIN sessions x ON x.charger_id=c.id AND x.status='completed'
                 AND x.started_at >= ($1::date::timestamp AT TIME ZONE $3) AND x.started_at < ($2::date::timestamp AT TIME ZONE $3)
+          WHERE ($4::int[] IS NULL OR s.id = ANY($4))
           GROUP BY s.id ORDER BY s.name`,
-        [from, to, TZ],
+        [from, to, TZ, scopeOf(req)],
       );
+      if (scopeOf(req)) for (const r of rows) { delete r.margin; delete r.energy_cost; } // el margen del operador no se muestra al edificio
       if (req.query.format !== 'csv') return rows;
       const header = ['Sitio', 'Suministro de', 'Propietario', 'Sesiones', 'kWh', 'Cobrado', 'Costo energía', 'A liquidar al propietario', 'Margen'];
       const lines = rows.map((r) =>
-        [r.site, r.line_owner, r.owner_name, r.sessions, (r.energy_wh / 1000).toFixed(3), r.amount.toFixed(2), r.energy_cost.toFixed(2), r.to_owner.toFixed(2), r.margin.toFixed(2)].map(csvCell).join(';'),
+        [r.site, r.line_owner, r.owner_name, r.sessions, (r.energy_wh / 1000).toFixed(3), r.amount.toFixed(2), r.energy_cost?.toFixed(2) ?? '', r.to_owner.toFixed(2), r.margin?.toFixed(2) ?? ''].map(csvCell).join(';'),
       );
       reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="propietarios-${req.query.month}.csv"`);
       return '\uFEFF' + [header.join(';'), ...lines].join('\n');
@@ -605,9 +662,9 @@ export default async function api(app) {
            FROM accounts a LEFT JOIN sites s ON s.id=a.site_id
            LEFT JOIN sessions x ON x.account_id=a.id AND x.status='completed'
                 AND x.started_at >= ($1::date::timestamp AT TIME ZONE $4) AND x.started_at < ($2::date::timestamp AT TIME ZONE $4)
-          WHERE ($3::int IS NULL OR a.site_id=$3)
+          WHERE ($3::int IS NULL OR a.site_id=$3) AND ($5::int[] IS NULL OR a.site_id = ANY($5))
           GROUP BY a.id, s.name ORDER BY s.name NULLS LAST, a.unit, a.name`,
-        [from, to, req.query.siteId || null, TZ],
+        [from, to, req.query.siteId || null, TZ, scopeOf(req)],
       );
       if (req.query.format !== 'csv') return rows;
       const header = ['Sitio', 'Unidad', 'Cuenta', 'Modalidad', 'Sesiones', 'kWh', 'Importe'];

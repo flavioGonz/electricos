@@ -62,13 +62,17 @@ function PowerBoard() {
   );
 }
 
-export function Dashboard({ go }) {
+export function Dashboard({ go, me }) {
+  const edificio = me?.level === 'edificio';
   const { data } = useApi('/dashboard', { live: true });
-  const chargers = useApi('/chargers', { live: true });
-  const active = (chargers.data || []).flatMap((c) => c.active_sessions.map((s) => ({ ...s, charger: c.name || c.id })));
+  const chargers = useApi(edificio ? null : '/chargers', { live: true });
+  const running = useApi(edificio ? '/sessions?status=active' : null, { live: true });
+  const active = edificio
+    ? (running.data || []).map((s) => ({ ...s, charger: s.charger_name || s.charger_id, account: s.account_name ? who(s.account_unit, s.account_name) : null, energy_wh: s.last_meter_wh - s.meter_start_wh }))
+    : (chargers.data || []).flatMap((c) => c.active_sessions.map((s) => ({ ...s, charger: c.name || c.id })));
   return (
     <div className="page">
-      <PageHeader title="Panel" desc="La red de carga en este momento." />
+      <PageHeader title="Panel" desc={edificio ? `${(me.sites || []).map((x) => x.name).join(', ') || 'Tu edificio'} en este momento.` : 'La red de carga en este momento.'} />
       {!data ? <Loading rows={2} /> : (
         <>
           <div className="stats">
@@ -76,10 +80,10 @@ export function Dashboard({ go }) {
             <Stat icon="plug" label="Cargadores en línea" value={`${data.chargers_online} de ${data.chargers}`} tone={data.chargers_online < data.chargers ? 'warn' : ''} />
             <Stat icon="power" label="Energía del mes" value={kwh(data.month_energy_wh)} />
             <Stat icon="dollar" label="Cobrado del mes" value={money(data.month_amount)} />
-            <Stat icon="star" label="Margen del mes" value={money(data.month_margin)} />
+            {data.month_margin != null && <Stat icon="star" label="Margen del mes" value={money(data.month_margin)} />}
           </div>
           <div className="list" style={{ marginTop: 14 }}>
-            {data.alerts_open > 0 && <div className="note click" onClick={() => go('/alertas')}><Icon name="alert" size={17} />{data.alerts_open === 1 ? 'Hay una alerta abierta' : `Hay ${data.alerts_open} alertas abiertas`}<span className="grow" /><Icon name="chevronRight" size={16} /></div>}
+            {data.alerts_open > 0 && !edificio && <div className="note click" onClick={() => go('/alertas')}><Icon name="alert" size={17} />{data.alerts_open === 1 ? 'Hay una alerta abierta' : `Hay ${data.alerts_open} alertas abiertas`}<span className="grow" /><Icon name="chevronRight" size={16} /></div>}
             {data.chargers_pending > 0 && <div className="note click" onClick={() => go('/cargadores')}><Icon name="plug" size={17} />{data.chargers_pending === 1 ? 'Un cargador nuevo espera aprobación' : `${data.chargers_pending} cargadores nuevos esperan aprobación`}<span className="grow" /><Icon name="chevronRight" size={16} /></div>}
           </div>
         </>
@@ -303,13 +307,14 @@ export function Sites() {
 }
 
 // ---------- Cuentas ----------
-export function Accounts() {
+export function Accounts({ me }) {
+  const ro = me?.level === 'edificio' || me?.level === 'lectura';
   const sites = useApi('/sites').data || [];
-  const tariffs = useApi('/tariffs').data || [];
+  const tariffs = useApi(me?.level === 'edificio' ? null : '/tariffs').data || [];
   const [mov, setMov] = useState(null);
   return (
     <>
-      <CrudPage title="Cuentas" singular="cuenta" icon="users" path="/accounts" desc="Unidades, familias o empresas. Todo lo que cargan sus tarjetas y usuarios de la app se suma acá."
+      <CrudPage title="Cuentas" singular="cuenta" icon="users" path="/accounts" readOnly={ro} desc="Unidades, familias o empresas. Todo lo que cargan sus tarjetas y usuarios de la app se suma acá."
         defaults={{ billing_mode: 'postpaid', credit_limit: 0, active: true }}
         emptyText="Creá una cuenta por unidad y asignale tarjetas."
         fields={[
@@ -339,15 +344,15 @@ export function Accounts() {
         ]}
         rowActions={(r) => <button className="btn ghost icon sm" aria-label="Detalle" data-tip="Movimientos, pagos y app" onClick={() => setMov(r)}><Icon name="history" size={15} /></button>}
       />
-      {mov && <AccountSheet account={mov} onClose={() => setMov(null)} />}
+      {mov && <AccountSheet account={mov} ro={ro} onClose={() => setMov(null)} />}
     </>
   );
 }
 
-function AccountSheet({ account, onClose }) {
+function AccountSheet({ account, onClose, ro }) {
   const [tab, setTab] = useState('mov');
   const { data, reload } = useApi(`/accounts/${account.id}/movements`);
-  const users = useApi(`/accounts/${account.id}/app-users`);
+  const users = useApi(ro ? null : `/accounts/${account.id}/app-users`);
   const [code, setCode] = useState(account.invite_code);
   const [pay, setPay] = useState({ kind: 'payment', amount: '', description: '' });
   const add = () => act(() => api(`/accounts/${account.id}/movements`, { method: 'POST', body: { ...pay, amount: Number(pay.amount) } }), 'Movimiento registrado')
@@ -355,15 +360,15 @@ function AccountSheet({ account, onClose }) {
   const invite = () => act(() => api(`/accounts/${account.id}/invite`, { method: 'POST' }), 'Código nuevo generado').then((r) => setCode(r.invite_code)).catch(() => {});
   return (
     <Modal icon="users" tone="blue" title={who(account.unit, account.name)} subtitle={data ? `Saldo ${money(data.balance)}` : ' '} size="lg" onClose={onClose}>
-      <div style={{ marginBottom: 16 }}><Segmented value={tab} onChange={setTab} options={[['mov', 'Movimientos'], ['app', 'App']]} /></div>
+      {!ro && <div style={{ marginBottom: 16 }}><Segmented value={tab} onChange={setTab} options={[['mov', 'Movimientos'], ['app', 'App']]} /></div>}
       {tab === 'mov' ? (
         <>
-          <div className="form-grid" style={{ gridTemplateColumns: '130px 130px 1fr auto', alignItems: 'end' }}>
+          {!ro && <div className="form-grid" style={{ gridTemplateColumns: '130px 130px 1fr auto', alignItems: 'end' }}>
             <Field label="Tipo"><select value={pay.kind} onChange={(e) => setPay({ ...pay, kind: e.target.value })}><option value="payment">Pago</option><option value="adjustment">Ajuste</option></select></Field>
             <Field label="Monto"><input type="number" value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} placeholder="500" /></Field>
             <Field label="Detalle"><input value={pay.description} onChange={(e) => setPay({ ...pay, description: e.target.value })} placeholder="Expensas de noviembre" /></Field>
             <div className="field"><button className="btn" disabled={!pay.amount} onClick={add}>Registrar</button></div>
-          </div>
+          </div>}
           {!data ? <Loading rows={3} /> : data.movements.length === 0 ? <p className="muted">Sin movimientos todavía.</p> : (
             <div className="card flush" style={{ boxShadow: 'none', border: '0.5px solid var(--sep)' }}><div className="tablewrap" style={{ maxHeight: '46vh' }}><table className="table">
               <thead><tr><th>Fecha</th><th>Detalle</th><th className="right">Monto</th></tr></thead>
@@ -418,7 +423,8 @@ export function Cards() {
 }
 
 // ---------- Sesiones ----------
-export function Sessions() {
+export function Sessions({ me }) {
+  const edificio = me?.level === 'edificio';
   const [status, setStatus] = useState('');
   const { data, reload } = useApi(`/sessions${status ? `?status=${status}` : ''}`, { live: true });
   const close = (s) => act(() => api(`/sessions/${s.id}/close`, { method: 'POST' }), 'Sesión cerrada').then(reload).catch(() => {});
@@ -427,7 +433,7 @@ export function Sessions() {
       <PageHeader title="Sesiones" desc="Cada carga con la energía que midió el cargador y lo que se cobró." actions={<Segmented value={status} onChange={setStatus} options={[['', 'Todas'], ['active', 'En curso'], ['completed', 'Terminadas']]} />} />
       {!data ? <Loading rows={6} /> : data.length === 0 ? <div className="card"><Empty icon="history" title="Sin sesiones">Cuando alguien cargue, aparece acá.</Empty></div> : (
         <div className="card flush"><div className="tablewrap"><table className="table">
-          <thead><tr><th>Inicio</th><th>Cargador</th><th>Cuenta</th><th className="right">Energía</th><th className="right">Importe</th><th className="right">Margen</th><th>Estado</th><th /></tr></thead>
+          <thead><tr><th>Inicio</th><th>Cargador</th><th>Cuenta</th><th className="right">Energía</th><th className="right">Importe</th>{!edificio && <th className="right">Margen</th>}<th>Estado</th><th /></tr></thead>
           <tbody>{data.map((s) => (
             <tr key={s.id}>
               <td style={{ whiteSpace: 'nowrap' }}>{dt(s.started_at)}<div className="subtle" style={{ fontSize: 12 }}>#{s.id}</div></td>
@@ -435,9 +441,9 @@ export function Sessions() {
               <td>{s.account_name ? who(s.account_unit, s.account_name) : <span className="mono">{s.id_tag}</span>}</td>
               <td className="right kwh">{kwh(s.status === 'active' ? s.last_meter_wh - s.meter_start_wh : s.energy_wh)}</td>
               <td className="right num">{s.amount != null ? money(s.amount) : '—'}</td>
-              <td className="right num subtle">{s.margin != null ? money(s.margin) : '—'}</td>
+              {!edificio && <td className="right num subtle">{s.margin != null ? money(s.margin) : '—'}</td>}
               <td>{s.status === 'active' ? <span className="badge mini info live"><span className="dot" />En curso</span> : s.stop_reason?.startsWith('Rechazada') ? <span className="badge mini falla"><span className="dot" />{s.stop_reason.replace('Rechazada: ', 'Rechazada · ')}</span> : <span className="badge mini gris">Terminada</span>}</td>
-              <td className="actions">{s.status === 'active' && <button className="btn ghost sm" onClick={() => close(s)} data-tip="Si el cargador no informó el final">Cerrar</button>}</td>
+              <td className="actions">{s.status === 'active' && !edificio && me?.level !== 'lectura' && <button className="btn ghost sm" onClick={() => close(s)} data-tip="Si el cargador no informó el final">Cerrar</button>}</td>
             </tr>
           ))}</tbody>
         </table></div></div>
@@ -475,24 +481,25 @@ export function Report() {
   );
 }
 
-export function OwnersReport() {
+export function OwnersReport({ me }) {
+  const edificio = me?.level === 'edificio';
   const [month, setMonth] = useState(thisMonth());
   const { data } = useApi(`/reports/owners?month=${month}`);
   const t = (data || []).reduce((a, r) => ({ amount: a.amount + r.amount, owner: a.owner + r.to_owner, margin: a.margin + r.margin }), { amount: 0, owner: 0, margin: 0 });
   return (
     <div className="page">
-      <PageHeader title="Liquidación a propietarios" desc="En cada sitio: lo cobrado, el costo de energía que se devuelve al titular de la línea y el margen de Infratec."
+      <PageHeader title="Liquidación a propietarios" desc={edificio ? 'Lo cobrado en tu edificio y lo que se le devuelve al titular de la línea por la energía.' : 'En cada sitio: lo cobrado, el costo de energía que se devuelve al titular de la línea y el margen de Infratec.'}
         actions={<button className="btn sec" onClick={() => downloadCsv(`/reports/owners?month=${month}&format=csv`, `propietarios-${month}.csv`).catch(() => {})}><Icon name="download" size={15} />CSV</button>} />
       <div className="row" style={{ marginBottom: 14 }}><Field label="Mes"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} /></Field></div>
       {!data ? <Loading rows={4} /> : (
         <div className="card flush"><div className="tablewrap"><table className="table">
-          <thead><tr><th>Sitio</th><th>Titular de la línea</th><th className="right">Energía</th><th className="right">Cobrado</th><th className="right">A liquidar</th><th className="right">Margen</th></tr></thead>
+          <thead><tr><th>Sitio</th><th>Titular de la línea</th><th className="right">Energía</th><th className="right">Cobrado</th><th className="right">A liquidar</th>{!edificio && <th className="right">Margen</th>}</tr></thead>
           <tbody>
             {data.map((r) => (
               <tr key={r.site_id}><td><b>{r.site}</b></td><td>{r.line_owner === 'cliente' ? r.owner_name || 'Cliente' : <span className="subtle">Infratec</span>}</td>
-                <td className="right kwh">{kwh(r.energy_wh)}</td><td className="right num">{money(r.amount)}</td><td className="right num">{money(r.to_owner)}</td><td className="right num">{money(r.margin)}</td></tr>
+                <td className="right kwh">{kwh(r.energy_wh)}</td><td className="right num">{money(r.amount)}</td><td className="right num">{money(r.to_owner)}</td>{!edificio && <td className="right num">{money(r.margin)}</td>}</tr>
             ))}
-            <tr className="total"><td colSpan={3}>Total</td><td className="right num">{money(t.amount)}</td><td className="right num">{money(t.owner)}</td><td className="right num">{money(t.margin)}</td></tr>
+            <tr className="total"><td colSpan={3}>Total</td><td className="right num">{money(t.amount)}</td><td className="right num">{money(t.owner)}</td>{!edificio && <td className="right num">{money(t.margin)}</td>}</tr>
           </tbody>
         </table></div></div>
       )}

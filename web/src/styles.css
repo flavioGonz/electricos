@@ -695,3 +695,10 @@ input.otp, .auth .in-box input.otp { font: 600 22px/1 var(--font-mono, ui-monosp
 .mfa-qr { width: 196px; height: 196px; padding: 14px; background: #fff; border-radius: 18px; box-shadow: 0 0 0 0.5px var(--sep), 0 8px 24px rgba(0,0,0,0.06); }
 .mfa-qr svg { width: 100%; height: 100%; display: block; }
 .mfa-banner { margin: 0 0 16px; }
+
+/* ───────── Selección múltiple en chips ───────── */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 7px 13px; border-radius: 999px; border: 0.5px solid var(--sep); background: var(--surface, #fff); color: var(--text); font: 500 13.5px var(--font); cursor: pointer; transition: background 0.2s, color 0.2s, box-shadow 0.2s, transform 0.15s; }
+.chip:hover { background: var(--accent-tint); }
+.chip:active { transform: scale(0.97); }
+.chip.on { background: var(--accent); color: #fff; border-color: transparent; box-shadow: 0 4px 12px rgba(225, 29, 72, 0.22); }
