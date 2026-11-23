@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import api, { ensureAdmin } from './api.js';
 import { createOcppServer } from './ocpp.js';
 import { migrate } from './migrate.js';
+import { startMonitor } from './monitor.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -46,7 +47,9 @@ export async function start() {
   await ensureAdmin(app.log);
   await app.listen({ port: PORT, host: HOST });
   app.log.info(`OCPP en ws://${HOST}:${PORT}/ocpp/<id-del-cargador>`);
+  const stopMonitor = startMonitor(app.log);
   const stop = async () => {
+    stopMonitor();
     await app.close();
     process.exit(0);
   };

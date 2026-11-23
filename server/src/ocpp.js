@@ -22,19 +22,26 @@ export async function accountBalance(accountId, db = { query: q }) {
 export async function authorizeTag(chargerId, rawTag, { allowActive = false } = {}) {
   const idTag = normTag(rawTag);
   const card = await one(
-    `SELECT c.*, a.active AS account_active, a.site_id AS account_site_id, a.billing_mode, a.credit_limit
-       FROM cards c JOIN accounts a ON a.id = c.account_id WHERE c.id_tag=$1`,
+    `SELECT c.*, a.active AS account_active, a.site_id AS account_site_id, a.billing_mode, a.credit_limit, u.active AS app_user_active
+       FROM cards c JOIN accounts a ON a.id = c.account_id LEFT JOIN app_users u ON u.id = c.app_user_id WHERE c.id_tag=$1`,
     [idTag],
   );
   if (!card) return { info: { status: 'Invalid' } };
   const expiry = card.expires_at ? { expiryDate: new Date(card.expires_at).toISOString() } : {};
-  if (card.status === 'blocked' || !card.account_active) return { info: { status: 'Blocked', ...expiry }, card };
+  if (card.status === 'blocked' || !card.account_active || card.app_user_active === false) return { info: { status: 'Blocked', ...expiry }, card };
   if (card.expires_at && new Date(card.expires_at) < new Date()) return { info: { status: 'Expired', ...expiry }, card };
 
   const charger = await one('SELECT * FROM chargers WHERE id=$1', [chargerId]);
   if (!charger || !charger.approved) return { info: { status: 'Invalid' }, card };
   if (charger.owner_account_id && charger.owner_account_id !== card.account_id) return { info: { status: 'Invalid' }, card };
   if (charger.site_id && card.account_site_id && charger.site_id !== card.account_site_id) return { info: { status: 'Invalid' }, card };
+
+  // Reserva vigente de otra cuenta: el cargador queda para quien reservó
+  const reserved = await one(
+    `SELECT account_id FROM reservations WHERE charger_id=$1 AND status='active' AND starts_at <= now() AND ends_at > now() LIMIT 1`,
+    [chargerId],
+  );
+  if (reserved && reserved.account_id !== card.account_id) return { info: { status: 'Invalid' }, card };
 
   if (card.billing_mode === 'prepaid') {
     const balance = await accountBalance(card.account_id);

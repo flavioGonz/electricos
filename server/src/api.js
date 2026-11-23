@@ -2,6 +2,7 @@
 import bcrypt from 'bcryptjs';
 import { one, many, q } from './db.js';
 import { clients, events, normTag, sendLocalList, accountBalance, closeSession } from './ocpp.js';
+import appApi, { newInviteCode } from './app.js';
 
 const TZ = process.env.TZ_LOCAL || 'America/Montevideo';
 
@@ -80,10 +81,13 @@ export default async function api(app) {
     const { email, password } = req.body || {};
     const admin = await one('SELECT * FROM admins WHERE email=$1', [String(email || '').toLowerCase()]);
     if (!admin || !(await bcrypt.compare(String(password || ''), admin.password_hash))) throw new HttpError(401, 'email o contraseña incorrectos');
-    return { token: app.jwt.sign({ sub: admin.id, email: admin.email }, { expiresIn: '12h' }), name: admin.name, email: admin.email };
+    return { token: app.jwt.sign({ sub: admin.id, email: admin.email, role: 'admin' }, { expiresIn: '12h' }), name: admin.name, email: admin.email };
   });
 
-  // Todo lo que sigue requiere sesión. EventSource no manda headers: aceptamos ?token= solo en /events.
+  // App de usuarios finales (QR, iniciar/detener, reservas, pagos)
+  app.register(appApi, { prefix: '/app' });
+
+  // Todo lo que sigue requiere sesión de administrador. EventSource no manda headers: aceptamos ?token= solo en /events.
   app.register(async (priv) => {
     priv.addHook('onRequest', async (req) => {
       if (req.routeOptions.url === '/api/events' && req.query?.token) req.headers.authorization = `Bearer ${req.query.token}`;
@@ -92,6 +96,7 @@ export default async function api(app) {
       } catch {
         throw new HttpError(401, 'sesión vencida o inválida');
       }
+      if (req.user.role !== 'admin') throw new HttpError(401, 'sesión vencida o inválida');
     });
 
     priv.get('/me', async (req) => one('SELECT id, email, name FROM admins WHERE id=$1', [req.user.sub]));
@@ -115,7 +120,9 @@ export default async function api(app) {
            (SELECT count(*) FROM chargers WHERE NOT approved) AS chargers_pending,
            (SELECT count(*) FROM sessions WHERE status='active') AS sessions_active,
            (SELECT count(*) FROM accounts WHERE active) AS accounts,
-           (SELECT count(*) FROM cards WHERE status='active') AS cards,
+           (SELECT count(*) FROM cards WHERE status='active' AND app_user_id IS NULL) AS cards,
+           (SELECT count(*) FROM app_users WHERE active) AS app_users,
+           (SELECT count(*) FROM alerts WHERE resolved_at IS NULL) AS alerts_open,
            (SELECT COALESCE(SUM(energy_wh),0) FROM sessions WHERE status='completed' AND started_at >= date_trunc('month', now() AT TIME ZONE $1) AT TIME ZONE $1) AS month_energy_wh,
            (SELECT COALESCE(SUM(amount),0) FROM sessions WHERE status='completed' AND started_at >= date_trunc('month', now() AT TIME ZONE $1) AT TIME ZONE $1) AS month_amount,
            (SELECT COALESCE(SUM(margin),0) FROM sessions WHERE status='completed' AND started_at >= date_trunc('month', now() AT TIME ZONE $1) AT TIME ZONE $1) AS month_margin`,
@@ -228,6 +235,35 @@ export default async function api(app) {
         [accountId || null, chargerId || null, siteId || null, status || null, from || null, to || null, Math.min(Number(limit) || 200, 2000)],
       );
     });
+
+    // Código para que los residentes se unan a la cuenta desde la app
+    priv.post('/accounts/:id/invite', async (req) => {
+      const row = await one('UPDATE accounts SET invite_code=$2 WHERE id=$1 RETURNING id, invite_code', [req.params.id, newInviteCode()]);
+      if (!row) throw notFound();
+      return row;
+    });
+    priv.get('/accounts/:id/app-users', async (req) => many('SELECT id, name, email, phone, active, created_at FROM app_users WHERE account_id=$1 ORDER BY name', [req.params.id]));
+    priv.patch('/app-users/:id', async (req) => update('app_users', 'id', req.params.id, pick(req.body, ['active', 'name', 'phone'])));
+
+    priv.get('/reservations', async () =>
+      many(`SELECT r.*, c.name AS charger_name, a.name AS account_name, a.unit AS account_unit FROM reservations r
+              JOIN chargers c ON c.id=r.charger_id JOIN accounts a ON a.id=r.account_id
+             WHERE r.status='active' AND r.ends_at > now() ORDER BY r.starts_at`),
+    );
+    priv.delete('/reservations/:id', async (req, reply) => {
+      await q(`UPDATE reservations SET status='cancelled' WHERE id=$1`, [req.params.id]);
+      return reply.code(204).send();
+    });
+
+    priv.get('/alerts', async (req) =>
+      many(`SELECT a.*, c.name AS charger_name, s.name AS site_name FROM alerts a LEFT JOIN chargers c ON c.id=a.charger_id LEFT JOIN sites s ON s.id=c.site_id
+             WHERE ($1::boolean OR a.resolved_at IS NULL) ORDER BY a.resolved_at IS NULL DESC, a.opened_at DESC LIMIT 200`, [req.query.all === '1']),
+    );
+    priv.post('/alerts/:id/resolve', async (req) => update('alerts', 'id', req.params.id, { resolved_at: new Date() }));
+
+    priv.get('/payments', async () =>
+      many(`SELECT p.*, a.name AS account_name FROM payments p JOIN accounts a ON a.id=p.account_id ORDER BY p.created_at DESC LIMIT 300`),
+    );
 
     priv.get('/accounts/:id/movements', async (req) => ({
       balance: await accountBalance(req.params.id),
