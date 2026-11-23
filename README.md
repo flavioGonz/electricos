@@ -23,8 +23,17 @@ npm install
 cp server/.env.example server/.env   # completar DATABASE_URL, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
 npm run dev:server                   # aplica migraciones, crea el admin y escucha en :3000
 npm run dev:web                      # panel en :5173 con proxy a la API
-npm test                             # pruebas de facturación
+npm test                             # pruebas unitarias: tarifas, potencia, facturación, doble factor, consumo
 ```
+
+Pruebas de la API de punta a punta (borran y recrean la base indicada, que tiene que tener "test" en el nombre):
+
+```bash
+createdb electricos_test
+TEST_DATABASE_URL=postgres://usuario:clave@localhost:5432/electricos_test npm run test:api -w server
+```
+
+GitHub Actions corre las dos suites y compila el panel en cada push y pull request (`.github/workflows/ci.yml`).
 
 Simular una carga de 5 kWh (el cargador `SIM-01` aparece en el panel; aprobalo y asignale un sitio):
 
