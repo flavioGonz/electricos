@@ -1,6 +1,7 @@
 // Usuarios de la app: lista con números de uso y una ficha por persona (perfil, cargas, seguridad y actividad).
 import React, { useMemo, useState } from 'react';
 import { Modal, Field, PageHeader, Loading, Empty, Segmented, Stat, Switch } from './components/ui.jsx';
+import { Select } from './components/select.jsx';
 import { Icon } from './components/icons.jsx';
 import { TempPassword } from './settings.jsx';
 import { api, kwh, money, dt, ago } from './api.js';
@@ -88,9 +89,7 @@ export function AppUsers() {
       <div className="toolbar">
         <span className="search"><Icon name="search" size={16} /><input placeholder="Buscar por nombre, email, celular, cuenta o sitio" value={filter} onChange={(e) => setFilter(e.target.value)} /></span>
         <Segmented value={state} onChange={setState} options={[['todos', 'Todos'], ['activos', 'Activos'], ['cargando', 'Cargando'], ['bloqueados', 'Bloqueados'], ['inactivos', 'Deshabilitados']]} />
-        <select className="sm" value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Ordenar">
-          <option value="name">Por nombre</option><option value="energy">Más energía</option><option value="recent">Carga más reciente</option><option value="login">Último ingreso</option>
-        </select>
+        <Select size="sm" icon="filter" ariaLabel="Ordenar" value={sort} onChange={setSort} options={[['name', 'Por nombre'], ['energy', 'Más energía'], ['recent', 'Carga más reciente'], ['login', 'Último ingreso']]} />
       </div>
       {!data ? <Loading rows={5} /> : rows.length === 0 ? (
         <div className="card"><Empty icon="users" title={all.length ? 'Nadie coincide con la búsqueda' : 'Todavía nadie se registró'}>Los residentes se registran desde la app con el código de invitación de su cuenta, o los podés crear acá.</Empty></div>
@@ -116,7 +115,7 @@ export function AppUsers() {
         <Modal icon="users" title="Nuevo usuario de la app" subtitle="Va a poder cargar con el celular a cuenta de la unidad elegida." onClose={() => setCreate(null)}
           footer={<><button className="btn sec" data-close onClick={() => setCreate(null)}>Cancelar</button><button className="btn" onClick={save}><Icon name="plus" size={16} />Crear</button></>}>
           <div className="form-grid">
-            <Field className="full" label="Cuenta"><select value={create.account_id} onChange={(e) => setCreate({ ...create, account_id: e.target.value })}>{accounts.map((a) => <option key={a.id} value={a.id}>{a.unit ? `${a.unit} · ` : ''}{a.name}</option>)}</select></Field>
+            <Field className="full" label="Cuenta"><Select value={create.account_id} onChange={(x) => setCreate({ ...create, account_id: x })} placeholder="Elegí la cuenta" options={accounts.map((a) => ({ value: a.id, label: `${a.unit ? `${a.unit} · ` : ''}${a.name}` }))} /></Field>
             <Field className="full" label="Nombre"><input value={create.name} onChange={(e) => setCreate({ ...create, name: e.target.value })} placeholder="Nombre y apellido" /></Field>
             <Field label="Email"><input type="email" value={create.email} onChange={(e) => setCreate({ ...create, email: e.target.value })} /></Field>
             <Field label="Celular (opcional)"><input value={create.phone} onChange={(e) => setCreate({ ...create, phone: e.target.value })} /></Field>
@@ -178,7 +177,7 @@ function Resumen({ u, accounts, onSaved }) {
           <Field label="Email" hint="Es con lo que entra a la app."><input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
           <Field label="Celular"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="09x xxx xxx" /></Field>
           <Field className="full" label="Cuenta a la que carga" hint="Si la cambiás, sus cargas nuevas van a la cuenta nueva.">
-            <select value={f.account_id} onChange={(e) => setF({ ...f, account_id: e.target.value })}>{accounts.map((a) => <option key={a.id} value={a.id}>{a.unit ? `${a.unit} · ` : ''}{a.name}</option>)}</select>
+            <Select value={f.account_id} onChange={(x) => setF({ ...f, account_id: x })} search options={accounts.map((a) => ({ value: a.id, label: `${a.unit ? `${a.unit} · ` : ''}${a.name}` }))} />
           </Field>
         </div>
         <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>

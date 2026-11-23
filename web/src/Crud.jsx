@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Modal, Field, PageHeader, Loading, Empty, Switch } from './components/ui.jsx';
 import { Icon } from './components/icons.jsx';
+import { Select } from './components/select.jsx';
 import { api } from './api.js';
 import { useApi, act } from './hooks.js';
 
@@ -106,10 +107,8 @@ export default function CrudPage({ title, singular, desc, icon, path, keyField =
                       {!(opts || []).length && <span className="subtle">No hay opciones todavía.</span>}
                     </div>
                   ) : f.type === 'select' ? (
-                    <select value={v ?? ''} onChange={(e) => set(f.name, e.target.value)}>
-                      {!f.required && <option value="">—</option>}
-                      {(opts || []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
+                    <Select value={v ?? ''} onChange={(x) => set(f.name, x)} placeholder="Elegir…"
+                      options={[...(f.required ? [] : [{ value: '', label: 'Ninguno' }]), ...(opts || [])]} />
                   ) : (
                     <input
                       type={f.type === 'number' ? 'number' : f.type === 'datetime' ? 'datetime-local' : f.type === 'email' ? 'email' : f.type === 'password' ? 'password' : 'text'}

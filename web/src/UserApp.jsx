@@ -1,6 +1,7 @@
 // App del usuario final (PWA, estilo iOS): se abre desde el QR del cargador (/c/:id) o desde /app.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Icon } from './components/icons.jsx';
+import { Select } from './components/select.jsx';
 import { Modal, Field, Segmented } from './components/ui.jsx';
 import { toast } from './components/toast.jsx';
 import { money, kwh } from './api.js';
@@ -230,7 +231,7 @@ function ReserveSheet({ chargers, onClose, onDone }) {
       <div className="form-grid">
         {chargers.length > 1 && (
           <Field className="full" label="Cargador">
-            <select value={chargerId} onChange={(e) => setChargerId(e.target.value)}>{chargers.map((c) => <option key={c.id} value={c.id}>{c.name}{c.site ? ` · ${c.site}` : ''}</option>)}</select>
+            <Select icon="plug" value={chargerId} onChange={setChargerId} options={chargers.map((c) => [c.id, c.name, c.site])} />
           </Field>
         )}
         <Field className="full" label="Desde"><input type="datetime-local" step={900} value={at} onChange={(e) => setAt(e.target.value)} /></Field>

@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import { Modal, Field, PageHeader, Loading, Empty, Switch, Segmented } from './components/ui.jsx';
 import { Icon } from './components/icons.jsx';
+import { Select } from './components/select.jsx';
 import CrudPage from './Crud.jsx';
 import { api, kwh, dt, ago } from './api.js';
 import { useApi, act } from './hooks.js';
@@ -218,9 +219,7 @@ export function Audit() {
       <div className="toolbar">
         <span className="search"><Icon name="search" size={16} /><input placeholder="Buscar por persona, detalle o identificador" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} /></span>
         <Segmented value={f.actor} onChange={(v) => setF({ ...f, actor: v })} options={[['', 'Todo'], ['admin', 'Panel'], ['app', 'App'], ['sistema', 'Sistema']]} />
-        <select className="sm" value={f.action} onChange={(e) => setF({ ...f, action: e.target.value })} aria-label="Acción">
-          <option value="">Todas las acciones</option>{Object.entries(ACTIONS).map(([k, v]) => <option key={k} value={k}>{v[2]}</option>)}
-        </select>
+        <Select size="sm" ariaLabel="Acción" value={f.action} onChange={(x) => setF({ ...f, action: x })} options={[{ value: '', label: 'Todas las acciones', icon: 'list' }, ...Object.entries(ACTIONS).map(([k, v]) => ({ value: k, label: v[2], icon: v[0] }))]} />
         <input className="sm" type="date" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} aria-label="Desde" data-tip="Desde" />
         <input className="sm" type="date" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} aria-label="Hasta" data-tip="Hasta" />
       </div>

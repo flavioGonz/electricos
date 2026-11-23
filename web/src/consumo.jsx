@@ -1,6 +1,7 @@
 // Consumo: energía por hora del día, por día del mes y por franja horaria (punta, llano, valle).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Field, PageHeader, Loading, Empty, Segmented, Stat } from './components/ui.jsx';
+import { Select } from './components/select.jsx';
 import { useApi } from './hooks.js';
 import { kwh } from './api.js';
 
@@ -40,7 +41,7 @@ export function Consumo({ me }) {
       <div className="row wrap" style={{ gap: 12, marginBottom: 16, alignItems: 'end' }}>
         <Field label="Mes"><input type="month" value={month} max={thisMonth()} onChange={(e) => setMonth(e.target.value)} /></Field>
         {(sites.length > 1 || me?.level !== 'edificio') && (
-          <Field label="Sitio"><select value={siteId} onChange={(e) => setSiteId(e.target.value)}><option value="">Todos</option>{sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
+          <Field label="Sitio"><Select icon="pin" value={siteId} onChange={setSiteId} options={[['', 'Todos los sitios'], ...sites.map((s) => [s.id, s.name])]} /></Field>
         )}
         <span className="grow" />
         <Segmented value={view} onChange={setView} options={[['chart', 'Gráficas'], ['table', 'Tabla']]} />
