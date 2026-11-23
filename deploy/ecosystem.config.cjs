@@ -4,7 +4,7 @@ module.exports = {
     {
       name: 'electricos',
       cwd: __dirname + '/../server',
-      script: 'src/index.js',
+      script: 'src/start.js',
       node_args: '--env-file=.env',
       env: { NODE_ENV: 'production' },
       max_memory_restart: '400M',

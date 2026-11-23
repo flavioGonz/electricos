@@ -4,8 +4,8 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch --env-file-if-exists=.env src/index.js",
+    "start": "node src/start.js",
+    "dev": "node --watch --env-file-if-exists=.env src/start.js",
     "migrate": "node --env-file-if-exists=.env src/migrate.js",
     "test": "node --test test/*.test.js"
   },

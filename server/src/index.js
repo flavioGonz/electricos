@@ -40,9 +40,7 @@ export async function build({ logger = true } = {}) {
   return app;
 }
 
-// Arranca si es el script principal (directo con node o bajo PM2, que usa su propio contenedor)
-const entry = [process.argv[1], process.env.pm_exec_path].filter(Boolean).map((p) => path.resolve(p));
-if (entry.includes(fileURLToPath(import.meta.url))) {
+export async function start() {
   await migrate((m) => console.log(m));
   const app = await build();
   await ensureAdmin(app.log);
@@ -54,4 +52,5 @@ if (entry.includes(fileURLToPath(import.meta.url))) {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+  return app;
 }
